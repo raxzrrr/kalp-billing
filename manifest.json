@@ -21,9 +21,15 @@
       "purpose": "any maskable"
     },
     {
-      "src": "icons/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml"
+      "src": "icons/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "image.png",
+      "sizes": "632x624",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }

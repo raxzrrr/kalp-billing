@@ -1,15 +1,17 @@
 // KALP PWA Service Worker
-const CACHE_NAME = 'kalp-pwa-v1';
+const CACHE_NAME = 'kalp-pwa-v2';
 
 const STATIC_ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './image.png',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './icons/icon.svg',
+  './icons/favicon-32.png',
+  './favicon.ico',
   'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js',
   'https://cdn.jsdelivr.net/npm/chart.js',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'

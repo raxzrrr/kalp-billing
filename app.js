@@ -2579,8 +2579,9 @@ function printProfessionalBill(bill) {
 
   // Logo
   let logoHTML = '';
-  if (shop.logo) {
-    logoHTML = `<img src="${shop.logo}" style="max-height:45px;max-width:100px;margin-bottom:2px;">`;
+  const currentLogo = (shop.logo !== 'none' && shop.logo !== false) ? (shop.logo || 'image.png') : '';
+  if (currentLogo) {
+    logoHTML = `<img src="${currentLogo}" style="max-height:48px;max-width:110px;margin-bottom:3px;border-radius:4px;object-fit:contain;">`;
   }
 
   // Calculations
@@ -3635,9 +3636,13 @@ document.addEventListener('keydown', (e) => {
 
 function getShopDetails() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.shopDetails)) || {};
+    const d = JSON.parse(localStorage.getItem(STORAGE_KEYS.shopDetails)) || {};
+    if (!d.logo && d.logo !== false && d.logo !== 'none') {
+      d.logo = 'image.png';
+    }
+    return d;
   } catch {
-    return {};
+    return { logo: 'image.png' };
   }
 }
 
@@ -3652,7 +3657,7 @@ function saveShopDetails() {
   const existing = getShopDetails();
   const details = {
     name, address, phone, email, gstin,
-    logo: existing.logo || ''  // preserve existing logo
+    logo: existing.logo !== undefined ? existing.logo : 'image.png'  // preserve existing logo
   };
 
   localStorage.setItem(STORAGE_KEYS.shopDetails, JSON.stringify(details));
@@ -3675,8 +3680,9 @@ function loadShopDetails() {
   document.getElementById('shop-next-bill').value = getBillCounter() + 1;
 
   // Show logo if exists
-  if (details.logo) {
-    document.getElementById('logo-preview-img').src = details.logo;
+  const currentLogo = (details.logo !== 'none' && details.logo !== false) ? (details.logo || 'image.png') : '';
+  if (currentLogo) {
+    document.getElementById('logo-preview-img').src = currentLogo;
     document.getElementById('logo-preview-img').style.display = 'block';
     document.getElementById('logo-placeholder').style.display = 'none';
   } else {
@@ -3755,7 +3761,7 @@ function handleLogoUpload(event) {
 
 function removeLogo() {
   const details = getShopDetails();
-  details.logo = '';
+  details.logo = 'none';
   localStorage.setItem(STORAGE_KEYS.shopDetails, JSON.stringify(details));
 
   document.getElementById('logo-preview-img').src = '';
