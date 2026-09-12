@@ -113,13 +113,29 @@ async function flushOfflineQueue() {
   const remainingQueue = [];
   for (const item of queue) {
     try {
-      const { error } = await supabaseClient
-        .from('kalp_store')
-        .upsert({ key: item.key, value: item.data, updated_at: new Date(item.timestamp).toISOString() });
+      if (item.data && item.data.type === 'single_bill') {
+        const b = item.data.bill;
+        const row = {
+          id: b.id,
+          bill_number: b.billNumber,
+          customer_name: b.customerName || 'Walk-in Customer',
+          phone: b.phone || '',
+          date: b.date || new Date().toISOString().split('T')[0],
+          grand_total: b.grandTotal || 0,
+          raw_data: b,
+          updated_at: new Date(item.timestamp).toISOString()
+        };
+        const { error } = await supabaseClient.from('kalp_bills').upsert(row);
+        if (error) remainingQueue.push(item);
+      } else {
+        const { error } = await supabaseClient
+          .from('kalp_store')
+          .upsert({ key: item.key, value: item.data, updated_at: new Date(item.timestamp).toISOString() });
 
-      if (error) {
-        console.error('Failed to flush offline queue item:', item.key, error);
-        remainingQueue.push(item);
+        if (error) {
+          console.error('Failed to flush offline queue item:', item.key, error);
+          remainingQueue.push(item);
+        }
       }
     } catch (err) {
       console.error('Network exception flushing item:', item.key, err);
@@ -177,6 +193,39 @@ window.addEventListener('offline', () => {
   showToast('Operating offline. Changes will queue and sync when reconnected.', 'warning');
 });
 
+// --- Individual Bills Table Sync Helpers ---
+async function saveSingleBillToCloud(bill) {
+  if (!supabaseClient || !navigator.onLine) {
+    addToOfflineQueue('single_bill_' + bill.id, { type: 'single_bill', bill });
+    return;
+  }
+  try {
+    const row = {
+      id: bill.id,
+      bill_number: bill.billNumber,
+      customer_name: bill.customerName || 'Walk-in Customer',
+      phone: bill.phone || '',
+      date: bill.date || new Date().toISOString().split('T')[0],
+      grand_total: bill.grandTotal || 0,
+      raw_data: bill,
+      updated_at: new Date().toISOString()
+    };
+    await supabaseClient.from('kalp_bills').upsert(row);
+  } catch (err) {
+    console.warn('saveSingleBillToCloud exception:', err);
+    addToOfflineQueue('single_bill_' + bill.id, { type: 'single_bill', bill });
+  }
+}
+
+async function deleteSingleBillFromCloud(billId) {
+  if (!supabaseClient || !navigator.onLine) return;
+  try {
+    await supabaseClient.from('kalp_bills').delete().eq('id', billId);
+  } catch (err) {
+    console.warn('deleteSingleBillFromCloud exception:', err);
+  }
+}
+
 async function syncToCloud(key, data) {
   if (!supabaseClient || !navigator.onLine) {
     addToOfflineQueue(key, data);
@@ -209,26 +258,48 @@ async function syncToCloud(key, data) {
 
 async function pullFromCloud() {
   if (!supabaseClient) return false;
+  let success = false;
   try {
+    // 1. Pull key-value store (inventory, staff, settings, barcodes, etc.)
     const { data, error } = await supabaseClient
       .from('kalp_store')
       .select('key, value');
-    if (error || !data) {
-      console.error('Pull error from Supabase:', error);
-      return false;
+    if (data && data.length > 0) {
+      data.forEach(row => {
+        if (row.key && row.value !== undefined) {
+          let val = row.value;
+          if (typeof val === 'string') {
+            try { val = JSON.parse(val); } catch(e) {}
+          }
+          appCache[row.key] = val;
+          localStorage.setItem(row.key, JSON.stringify(val));
+        }
+      });
+      success = true;
     }
 
-    data.forEach(row => {
-      if (row.key && row.value !== undefined) {
-        let val = row.value;
-        if (typeof val === 'string') {
-          try { val = JSON.parse(val); } catch(e) {}
-        }
-        appCache[row.key] = val;
-        localStorage.setItem(row.key, JSON.stringify(val));
+    // 2. Pull dedicated bills table if available (individual rows)
+    const billsResult = await supabaseClient
+      .from('kalp_bills')
+      .select('raw_data, bill_number')
+      .order('id', { ascending: true });
+
+    if (billsResult.data && billsResult.data.length > 0) {
+      const bills = billsResult.data.map(r => r.raw_data);
+      appCache[STORAGE_KEYS.bills] = bills;
+      localStorage.setItem(STORAGE_KEYS.bills, JSON.stringify(bills));
+
+      // Automatically sync bill counter to highest cloud bill number to avoid collisions
+      const maxBillNum = Math.max(...billsResult.data.map(r => parseInt(r.bill_number) || 0));
+      const currentCounter = getBillCounter();
+      if (maxBillNum > currentCounter) {
+        appCache[STORAGE_KEYS.billCounter] = maxBillNum;
+        localStorage.setItem(STORAGE_KEYS.billCounter, maxBillNum.toString());
       }
-    });
-    return true;
+      success = true;
+    }
+
+    return success;
   } catch (err) {
     console.error('Pull from cloud failed:', err);
     return false;
@@ -1031,6 +1102,7 @@ function deleteBill(id) {
 
     const updated = bills.filter(b => b.id !== id);
     setData(STORAGE_KEYS.bills, updated);
+    deleteSingleBillFromCloud(id);
     showToast('Bill moved to Recycle Bin', 'success');
     refreshDashboard();
   }
@@ -1634,6 +1706,7 @@ function restoreBill(id) {
   bills.push(billToRestore);
   bills.sort((a,b) => a.id - b.id);
   setData(STORAGE_KEYS.bills, bills);
+  saveSingleBillToCloud(billToRestore);
   
   // 4. Remove from deletedDb
   deletedDb.splice(index, 1);
@@ -2285,6 +2358,7 @@ function saveAndPrintBill() {
       };
 
       setData(STORAGE_KEYS.bills, bills);
+      saveSingleBillToCloud(bills[index]);
 
       // Update counter if this number is higher
       const currentCounter = getBillCounter();
@@ -2373,6 +2447,7 @@ function saveAndPrintBill() {
 
     bills.push(bill);
     setData(STORAGE_KEYS.bills, bills);
+    saveSingleBillToCloud(bill);
 
     bill.items.forEach(item => {
       decrementStock(item.itemName, item.qty);
