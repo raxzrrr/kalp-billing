@@ -28,6 +28,7 @@ const DEFAULT_SUPABASE_URL = 'https://hrdirkxtydyprrqexnln.supabase.co';
 const DEFAULT_SUPABASE_KEY = 'sb_publishable_ES0G9ef3bF6Ht217PGHDWg_2uWd1jFB';
 
 let supabaseClient = null;
+let realtimeChannel = null;
 
 function initSupabase() {
   const url = localStorage.getItem('kalp_supabase_url') || DEFAULT_SUPABASE_URL;
@@ -36,9 +37,96 @@ function initSupabase() {
     try {
       supabaseClient = window.supabase.createClient(url, key);
       console.log('⚡ Supabase cloud sync initialized');
+      initRealtimeSubscriptions();
     } catch (err) {
       console.error('Failed to initialize Supabase client:', err);
     }
+  }
+}
+
+// --- Realtime WebSocket Subscriptions ---
+function initRealtimeSubscriptions() {
+  if (!supabaseClient || realtimeChannel) return;
+  try {
+    realtimeChannel = supabaseClient
+      .channel('kalp-bills-live')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'kalp_bills' },
+        payload => handleRealtimeBillInsert(payload.new)
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'kalp_bills' },
+        payload => handleRealtimeBillUpdate(payload.new)
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'kalp_bills' },
+        payload => handleRealtimeBillDelete(payload.old)
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('⚡ Realtime WebSockets connected: Listening for live bills from all devices!');
+        }
+      });
+  } catch (err) {
+    console.warn('Realtime subscription error:', err);
+  }
+}
+
+function handleRealtimeBillInsert(newRow) {
+  if (!newRow || !newRow.raw_data) return;
+  const bill = newRow.raw_data;
+  const bills = getData(STORAGE_KEYS.bills);
+
+  // Avoid duplicating if bill was created on this same device
+  const exists = bills.some(b => b.id === bill.id || b.billNumber === bill.billNumber);
+  if (exists) return;
+
+  bills.push(bill);
+  appCache[STORAGE_KEYS.bills] = bills;
+  localStorage.setItem(STORAGE_KEYS.bills, JSON.stringify(bills));
+
+  // Advance counter if higher
+  if (bill.billNumber > getBillCounter()) {
+    appCache[STORAGE_KEYS.billCounter] = bill.billNumber;
+    localStorage.setItem(STORAGE_KEYS.billCounter, bill.billNumber.toString());
+  }
+
+  rebuildLedgerCache();
+  if (typeof refreshDashboard === 'function') refreshDashboard();
+  if (typeof renderRecentBillsTable === 'function') renderRecentBillsTable();
+  
+  showToast(`⚡ Live Update: Bill #KALP-${String(bill.billNumber).padStart(4, '0')} added from another device!`, 'info');
+}
+
+function handleRealtimeBillUpdate(newRow) {
+  if (!newRow || !newRow.raw_data) return;
+  const bill = newRow.raw_data;
+  const bills = getData(STORAGE_KEYS.bills);
+
+  const idx = bills.findIndex(b => b.id === bill.id);
+  if (idx !== -1) {
+    bills[idx] = bill;
+    appCache[STORAGE_KEYS.bills] = bills;
+    localStorage.setItem(STORAGE_KEYS.bills, JSON.stringify(bills));
+    rebuildLedgerCache();
+    if (typeof refreshDashboard === 'function') refreshDashboard();
+    if (typeof renderRecentBillsTable === 'function') renderRecentBillsTable();
+  }
+}
+
+function handleRealtimeBillDelete(oldRow) {
+  if (!oldRow || !oldRow.id) return;
+  const bills = getData(STORAGE_KEYS.bills);
+  const updated = bills.filter(b => b.id !== oldRow.id);
+  if (updated.length !== bills.length) {
+    appCache[STORAGE_KEYS.bills] = updated;
+    localStorage.setItem(STORAGE_KEYS.bills, JSON.stringify(updated));
+    rebuildLedgerCache();
+    if (typeof refreshDashboard === 'function') refreshDashboard();
+    if (typeof renderRecentBillsTable === 'function') renderRecentBillsTable();
   }
 }
 
