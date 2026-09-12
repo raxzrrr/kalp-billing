@@ -6,6 +6,13 @@
   <meta name="description" content="KALP - Shop Billing & Inventory Management Application">
   <title>KALP - Billing & Inventory Manager</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="theme-color" content="#6c63ff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="KALP">
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -63,6 +70,13 @@
         <span class="nav-icon">🏪</span>
         <span class="nav-text">Shop Details</span>
       </a>
+
+      <!-- PWA Install App Button -->
+      <div id="pwa-install-container" style="display:none; padding: 16px 12px 8px 12px;">
+        <button id="pwa-install-btn" class="btn btn-primary" style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-size:0.85rem; padding: 8px 12px; border-radius: var(--radius-md); box-shadow: var(--accent-glow);">
+          <span>📲</span> <span>Install App</span>
+        </button>
+      </div>
     </nav>
   </aside>
 
@@ -1402,5 +1416,48 @@
 </div>
 
 <script src="app.js"></script>
+<script>
+  // PWA Service Worker Registration
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .then(reg => console.log('⚡ PWA ServiceWorker active:', reg.scope))
+        .catch(err => console.warn('PWA ServiceWorker notice:', err));
+    });
+  }
+
+  // PWA Installation Prompt Handler
+  let deferredPrompt;
+  const pwaInstallContainer = document.getElementById('pwa-install-container');
+  const pwaInstallBtn = document.getElementById('pwa-install-btn');
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (pwaInstallContainer) {
+      pwaInstallContainer.style.display = 'block';
+    }
+  });
+
+  if (pwaInstallBtn) {
+    pwaInstallBtn.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('PWA install outcome:', outcome);
+      deferredPrompt = null;
+      if (pwaInstallContainer) {
+        pwaInstallContainer.style.display = 'none';
+      }
+    });
+  }
+
+  window.addEventListener('appinstalled', () => {
+    console.log('KALP App installed successfully');
+    if (pwaInstallContainer) {
+      pwaInstallContainer.style.display = 'none';
+    }
+  });
+</script>
 </body>
 </html>
