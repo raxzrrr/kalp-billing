@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="KALP - Shop Billing & Inventory Management Application">
+  <title>KALP - Billing & Inventory Manager</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="app-container">
+  <!-- ===== Sidebar ===== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <div class="logo-icon">K</div>
+        <div>
+          <div class="logo-text">KALP</div>
+          <div class="logo-sub">Billing Manager</div>
+        </div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-label">Main Menu</div>
+      <a href="#dashboard" class="nav-item active" data-page="dashboard" id="nav-dashboard">
+        <span class="nav-icon">📊</span>
+        <span class="nav-text">Dashboard</span>
+      </a>
+      <a href="#dailybook" class="nav-item" data-page="dailybook" id="nav-dailybook">
+        <span class="nav-icon">📓</span>
+        <span class="nav-text">Daily Book</span>
+      </a>
+      <a href="#billing" class="nav-item" data-page="billing" id="nav-billing">
+        <span class="nav-icon">🧾</span>
+        <span class="nav-text">Billing</span>
+      </a>
+      <a href="#inventory" class="nav-item" data-page="inventory" id="nav-inventory">
+        <span class="nav-icon">📦</span>
+        <span class="nav-text">Inventory</span>
+      </a>
+      <a href="#barcodes" class="nav-item" data-page="barcodes" id="nav-barcodes">
+        <span class="nav-icon">🏷️</span>
+        <span class="nav-text">Barcodes</span>
+      </a>
+      <a href="#orders" class="nav-item" data-page="orders" id="nav-orders">
+        <span class="nav-icon">📒</span>
+        <span class="nav-text">Order Ledger</span>
+      </a>
+      <a href="#analytics" class="nav-item" data-page="analytics" id="nav-analytics">
+        <span class="nav-icon">📈</span>
+        <span class="nav-text">Analytics</span>
+      </a>
+      <a href="#staff" class="nav-item" data-page="staff" id="nav-staff">
+        <span class="nav-icon">👨‍💼</span>
+        <span class="nav-text">Staff</span>
+      </a>
+      <div class="nav-label" style="margin-top:16px;">Settings</div>
+      <a href="#shopdetails" class="nav-item" data-page="shopdetails" id="nav-shopdetails">
+        <span class="nav-icon">🏪</span>
+        <span class="nav-text">Shop Details</span>
+      </a>
+    </nav>
+  </aside>
+
+  <!-- ===== Main Content ===== -->
+  <main class="main-content">
+
+    <!-- ===== DASHBOARD ===== -->
+    <section class="page-section active" id="page-dashboard">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Dashboard</h1>
+          <p class="page-subtitle">Your business at a glance</p>
+        </div>
+        <div class="page-actions">
+          <input type="file" id="app-data-import" accept=".json" style="display:none" onchange="importAllData(event)">
+          <button class="btn btn-secondary" onclick="document.getElementById('app-data-import').click()">📤 Import Data</button>
+          <button class="btn btn-success" onclick="exportAllData()">📥 Export Data</button>
+          <button class="btn btn-primary" onclick="exportBillsCSV()">📥 Export Bills (Excel)</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <div class="stats-grid">
+          <div class="stat-card stat-sales">
+            <div class="stat-icon">💰</div>
+            <div class="stat-info">
+              <div class="stat-value privacy-blur" id="stat-total-sales" onclick="togglePrivacy(this, event)" title="Click to reveal">₹0</div>
+              <div class="stat-label">Total Sales</div>
+            </div>
+          </div>
+          <div class="stat-card stat-today">
+            <div class="stat-icon">📈</div>
+            <div class="stat-info">
+              <div class="stat-value privacy-blur" id="stat-today-sales" onclick="togglePrivacy(this, event)" title="Click to reveal">₹0</div>
+              <div class="stat-label">Today's Sales</div>
+            </div>
+          </div>
+          <div class="stat-card stat-bills">
+            <div class="stat-icon">📄</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-total-bills">0</div>
+              <div class="stat-label">Total Bills</div>
+            </div>
+          </div>
+<div class="stat-card" style="background: rgba(34,197,94,0.05); cursor: pointer; transition: transform 0.2s;" onclick="openLedgerModal('Cash')" onmouseover="this.style.transform='translateY(-3px)'" onmouseout="this.style.transform='translateY(0)'" title="Click to view ledger.">
+            <div class="stat-icon" style="background: rgba(34,197,94,0.1); color: #22c55e;">💵</div>
+            <div class="stat-info">
+              <div class="stat-value privacy-blur" id="stat-cash-hand" onclick="togglePrivacy(this, event)" title="Click to reveal">₹0</div>
+              <div class="stat-label">Cash in Hand</div>
+            </div>
+          </div>
+          <div class="stat-card" style="background: rgba(59,130,246,0.05); cursor: pointer; transition: transform 0.2s;" onclick="openLedgerModal('Bank')" onmouseover="this.style.transform='translateY(-3px)'" onmouseout="this.style.transform='translateY(0)'" title="Click to view ledger.">
+            <div class="stat-icon" style="background: rgba(59,130,246,0.1); color: #3b82f6;">🏦</div>
+            <div class="stat-info">
+              <div class="stat-value privacy-blur" id="stat-bank-balance" onclick="togglePrivacy(this, event)" title="Click to reveal">₹0</div>
+              <div class="stat-label">Bank Balance</div>
+            </div>
+          </div>
+          <div class="stat-card" style="cursor: pointer; background: var(--bg-card); transition: transform 0.2s;" onclick="openCustomerModal()" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
+            <div class="stat-icon" style="background: rgba(108,99,255,0.1); color: var(--accent-primary);">👥</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-total-customers">0</div>
+              <div class="stat-label" style="display:flex; justify-content:space-between; align-items:center;">
+                Customers
+                <span style="font-size: 0.75rem; color: var(--accent-primary); font-weight: 600;">View Data ➔</span>
+              </div>
+            </div>
+          </div>
+          <div class="stat-card" style="cursor: pointer; background: var(--bg-card); transition: transform 0.2s;" onclick="openDeliveriesModal()" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
+            <div class="stat-icon" style="background: rgba(245,158,11,0.1); color: #f59e0b;">📅</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-upcoming-deliveries">0</div>
+              <div class="stat-label" style="display:flex; justify-content:space-between; align-items:center;">
+                Deliveries
+                <span style="font-size: 0.75rem; color: #f59e0b; font-weight: 600;">View Dates ➔</span>
+              </div>
+            </div>
+          </div>
+          <div class="stat-card" style="cursor: pointer; background: var(--bg-card); transition: transform 0.2s;" onclick="openDeletedBillsModal()" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
+            <div class="stat-icon" style="background: rgba(239,68,68,0.1); color: #ef4444;">🗑️</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-deleted-bills">0</div>
+              <div class="stat-label" style="display:flex; justify-content:space-between; align-items:center;">
+                Recycle Bin
+                <span style="font-size: 0.75rem; color: #ef4444; font-weight: 600;">View ➔</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="chart-container">
+            <div class="section-header" style="margin-bottom:12px;">
+              <h3 class="section-title" id="sales-chart-title">Sales — Last 7 Days</h3>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-outline btn-sm active" id="range-7-btn" onclick="updateDashboardRange(7)">7 Days</button>
+                <button class="btn btn-outline btn-sm" id="range-15-btn" onclick="updateDashboardRange(15)">15 Days</button>
+                <button class="btn btn-outline btn-sm" id="range-30-btn" onclick="updateDashboardRange(30)">30 Days</button>
+                <button class="btn btn-outline btn-sm" id="range-month-btn" onclick="updateDashboardRange('month')">Month-wise</button>
+              </div>
+            </div>
+            <div class="bar-chart" id="sales-chart"></div>
+          </div>
+          <div class="card">
+            <div class="section-header">
+              <h3 class="section-title">Recent Bills</h3>
+              <div style="display:flex;gap:8px; align-items:center;">
+                <div class="search-bar" style="max-width:200px; margin-bottom: 0;">
+                  <span class="search-icon">🔍</span>
+                  <input type="text" class="form-input input-sm" id="recent-bills-search" placeholder="Search bills..." oninput="filterRecentBills()">
+                </div>
+                <button class="btn btn-outline btn-sm" onclick="openAllBillsModal()">📂 View All</button>
+                <button class="btn btn-danger btn-sm" onclick="clearAllBillsData()">🚨 Clear All</button>
+              </div>
+            </div>
+            <div class="table-container" style="border:none;box-shadow:none;">
+              <table class="data-table" id="recent-bills-table">
+                <thead>
+                  <tr><th>Bill #</th><th>Customer</th><th>Date</th><th>Amount</th><th>Status</th><th class="ta-c">Actions</th></tr>
+                </thead>
+                <tbody id="recent-bills-body">
+                  <tr><td colspan="5">
+                    <div class="empty-state"><div class="empty-icon">📄</div><div class="empty-text">No bills yet</div><div class="empty-sub">Create your first bill to see it here</div></div>
+                  </td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== DAILY BOOK ===== -->
+    <section class="page-section" id="page-dailybook">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Daily Book</h1>
+          <p class="page-subtitle">Track daily entries, cash collection, and expenses</p>
+        </div>
+        <div class="page-actions" style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" class="form-input" id="dailybook-date" onchange="renderDailyBook(this.value)">
+          <button class="btn btn-primary" onclick="openDailyExpenseModal()">➕ Add Entry</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <!-- Daily Summary Cards -->
+        <div class="stats-grid" style="margin-bottom: 20px;">
+          <div class="stat-card" style="background: rgba(34,197,94,0.05);">
+            <div class="stat-icon" style="background: rgba(34,197,94,0.1); color: #22c55e;">💵</div>
+            <div class="stat-info">
+              <div class="stat-value" id="daily-stat-cash-in">₹0</div>
+              <div class="stat-label">Cash Received</div>
+            </div>
+          </div>
+          <div class="stat-card" style="background: rgba(59,130,246,0.05);">
+            <div class="stat-icon" style="background: rgba(59,130,246,0.1); color: #3b82f6;">🏦</div>
+            <div class="stat-info">
+              <div class="stat-value" id="daily-stat-bank-in">₹0</div>
+              <div class="stat-label">Bank/UPI Received</div>
+            </div>
+          </div>
+          <div class="stat-card" style="background: rgba(239,68,68,0.05);">
+            <div class="stat-icon" style="background: rgba(239,68,68,0.1); color: #ef4444;">📉</div>
+            <div class="stat-info">
+              <div class="stat-value" id="daily-stat-expenses">₹0</div>
+              <div class="stat-label">Expenses/Out</div>
+            </div>
+          </div>
+          <div class="stat-card stat-sales">
+            <div class="stat-icon">💰</div>
+            <div class="stat-info">
+              <div class="stat-value" id="daily-stat-net-cash">₹0</div>
+              <div class="stat-label">Net Cash in Hand</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Transactions Table -->
+        <div class="card">
+          <div class="section-header">
+            <h3 class="section-title">Transactions for <span id="dailybook-display-date">Today</span></h3>
+          </div>
+          <div class="table-container" style="border:none;box-shadow:none; max-height: 500px; overflow-y: auto;">
+            <table class="data-table">
+              <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+                <tr>
+                  <th>Type</th>
+                  <th>Description</th>
+                  <th>Method</th>
+                  <th style="text-align: right;">In (₹)</th>
+                  <th style="text-align: right;">Out (₹)</th>
+                  <th style="text-align: center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="dailybook-table-body">
+                <tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📓</div><div class="empty-text">No transactions for this date</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== BILLING ===== -->
+    <section class="page-section" id="page-billing">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Create Bill</h1>
+          <p class="page-subtitle">Generate invoices for your customers — scan barcodes into Item Name field</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary" id="btn-new-bill" onclick="resetBillForm()">✨ New Bill</button>
+          <button class="btn btn-primary" id="btn-save-print-bill" onclick="saveAndPrintBill()">💾 Save & Print 🖨️</button>
+        </div>
+      </div>
+      <div class="page-content" id="bill-print-area">
+
+        <!-- Date + Bill No + GST Toggle -->
+        <div class="billing-section">
+          <div class="billing-section-title">📅 Bill Details</div>
+          <div class="card">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Date</label>
+                <input type="date" class="form-input" id="bill-date">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Bill Number</label>
+                <input type="text" class="form-input" id="bill-number" placeholder="Auto-generated (e.g. KALP-0001)">
+              </div>
+              <div class="form-group">
+                <label class="form-label">GST Mode</label>
+                <div class="gst-toggle" id="gst-toggle">
+                  <button class="gst-toggle-btn active" data-mode="including" onclick="setGstMode('including')">Including GST</button>
+                  <button class="gst-toggle-btn" data-mode="excluding" onclick="setGstMode('excluding')">Excluding GST</button>
+                </div>
+              </div>
+            </div>
+            <div class="form-row" style="margin-top:14px; gap: 16px;">
+              <div class="form-group" style="flex:1; margin-bottom: 0;">
+                <label class="form-label">💸 Payment Method</label>
+                <div class="payment-method-toggle" id="payment-method-toggle" style="display:flex;gap:8px;">
+                  <button class="btn btn-outline btn-sm" data-method="Cash" onclick="setPaymentMethod('Cash', true)">💵 Cash</button>
+                  <button class="btn btn-outline btn-sm" data-method="PhonePe" onclick="setPaymentMethod('PhonePe', true)">📱 PhonePe</button>
+                  <button class="btn btn-outline btn-sm" data-method="Card" onclick="setPaymentMethod('Card', true)">💳 Card</button>
+                  <button class="btn btn-outline btn-sm" data-method="Split" onclick="setPaymentMethod('Split', true)">🔀 Split (Cash + PhonePe)</button>
+                </div>
+                <input type="hidden" id="bill-payment-method" value="">
+                
+                <div id="split-payment-fields" style="display: none; margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.03); border-radius: var(--radius-sm); border: 1px dashed var(--border-color);">
+                  <div style="display: flex; gap: 10px;">
+                    <div style="flex: 1;">
+                      <label class="form-label" style="font-size: 0.8rem;">Cash Given (₹)</label>
+                      <input type="number" class="form-input input-sm" id="split-cash" placeholder="0.00" min="0" step="0.01" oninput="calculateSplitRemaining('cash')">
+                    </div>
+                    <div style="flex: 1;">
+                      <label class="form-label" style="font-size: 0.8rem;">PhonePe Given (₹)</label>
+                      <input type="number" class="form-input input-sm" id="split-phonepe" placeholder="0.00" min="0" step="0.01" oninput="calculateSplitRemaining('phonepe')">
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="form-group" style="flex:1; margin-bottom: 0;">
+                <label class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+                  <span>🚚 Delivery Date</span>
+                  <label style="display:flex; align-items:center; gap:4px; font-weight:normal; font-size:0.8rem; cursor:pointer;">
+                    <input type="checkbox" id="bill-no-delivery" onchange="document.getElementById('bill-delivery-date').disabled = this.checked"> No Delivery
+                  </label>
+                </label>
+                <input type="date" class="form-input" id="bill-delivery-date">
+              </div>
+              <div class="form-group" style="flex:1; margin-bottom: 0;">
+                <label class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+                  <span>🪡 Tailor Amount (₹)</span>
+                  <label style="display:flex; align-items:center; gap:4px; font-weight:normal; font-size:0.8rem; cursor:pointer;">
+                    <input type="checkbox" id="bill-no-tailor" onchange="document.getElementById('bill-tailor-amount').disabled = this.checked"> No Tailor
+                  </label>
+                </label>
+                <input type="number" class="form-input" id="bill-tailor-amount" placeholder="0.00" min="0" step="0.01">
+              </div>
+            </div>
+            <!-- Row 3: Staff + Event Date + Fabric Cut -->
+            <div class="form-row" style="margin-top:14px; gap: 16px; align-items: flex-end;">
+              <div class="form-group" style="flex:1; margin-bottom:0;">
+                <label class="form-label">👨‍💼 Billed By (Staff)</label>
+                <select class="form-input" id="bill-staff-id">
+                  <option value="">— Select Staff —</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex:1; margin-bottom:0;">
+                <label class="form-label">🎉 Customer Event Date (optional)</label>
+                <input type="date" class="form-input" id="bill-event-date">
+              </div>
+              <div class="form-group" style="flex:1; margin-bottom:0; justify-content:flex-end;">
+                <label class="form-label" style="visibility:hidden;">Action</label>
+                <label class="fabric-cut-label" style="display:flex; align-items:center; gap:10px; padding:10px 14px; background:rgba(34,197,94,0.06); border:1px solid rgba(34,197,94,0.25); border-radius:var(--radius-sm); cursor:pointer;">
+                  <input type="checkbox" id="bill-fabric-cut" style="width:18px;height:18px;accent-color:#22c55e;cursor:pointer;">
+                  <span style="font-size:0.88rem; font-weight:600; color:var(--text-secondary);">✂️ Fabric cut &amp; submitted to tailor</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Customer Info -->
+        <div class="billing-section">
+          <div class="billing-section-title">👤 Customer Information</div>
+          <div class="card">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Customer Name</label>
+                <input type="text" class="form-input" id="bill-customer-name" placeholder="Enter customer name">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Phone Number</label>
+                <input type="tel" class="form-input" id="bill-phone" placeholder="Enter phone number">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Email</label>
+                <input type="email" class="form-input" id="bill-email" placeholder="Enter email (optional)">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Outfit Details -->
+        <div class="billing-section">
+          <div class="billing-section-title">✂️ Outfit Details & Instructions</div>
+          <div class="card">
+            <div class="form-row">
+              <div class="form-group" style="flex: 2;">
+                <label class="form-label">Special Details and Instructions</label>
+                <textarea class="form-input" id="bill-outfit-instructions" rows="4" placeholder="Enter measurements, styling details, specific requirements, etc."></textarea>
+              </div>
+              <div class="form-group" style="flex: 3;">
+                <label class="form-label">Garments to be Made</label>
+                <div class="outfit-options-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; background: rgba(0,0,0,0.02); padding: 12px; border-radius: var(--radius-sm); border: 1px dashed var(--border-color);">
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Shirt" onchange="toggleGarmentQty(this)"> Shirt
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Shirt" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Pant" onchange="toggleGarmentQty(this)"> Pant
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Pant" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Jodhpuri" onchange="toggleGarmentQty(this)"> Jodhpuri
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Jodhpuri" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Suit" onchange="toggleGarmentQty(this)"> Suit
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Suit" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Blazer" onchange="toggleGarmentQty(this)"> Blazer
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Blazer" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Kurta" onchange="toggleGarmentQty(this)"> Kurta
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Kurta" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Vest Coat" onchange="toggleGarmentQty(this)"> Vest Coat
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Vest Coat" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Modi Coat" onchange="toggleGarmentQty(this)"> Modi Coat
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Modi Coat" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                  <div class="outfit-item-row">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1;">
+                      <input type="checkbox" class="outfit-checkbox" value="Indo Western" onchange="toggleGarmentQty(this)"> Indo Western
+                    </label>
+                    <input type="number" class="form-input input-sm outfit-qty" data-garment="Indo Western" placeholder="Qty" min="1" style="width: 52px; display: none;">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Line Items -->
+        <div class="billing-section">
+          <div class="billing-section-title">📦 Items <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:0.78rem;color:var(--text-muted);">— Scan barcode into Item Name or type manually</span></div>
+          <div class="line-items-header">
+            <span class="col-sno">S.No</span>
+            <span class="col-item">Item Name / Barcode</span>
+            <span class="col-qty">Mts</span>
+            <span class="col-price">Price (₹)</span>
+            <span class="col-total">Total (₹)</span>
+            <span class="col-action"></span>
+          </div>
+          <div class="line-items-body" id="line-items-body"></div>
+          <div class="add-row-container no-print">
+            <button class="btn btn-secondary btn-sm" onclick="addLineItem()">➕ Add Item</button>
+          </div>
+        </div>
+
+        <!-- Bill Summary -->
+        <div class="bill-summary">
+          <div class="bill-summary-card">
+            <div class="summary-row" style="margin-bottom: 8px;">
+              <span class="summary-label">Discount (%)</span>
+              <span class="summary-value" style="display:flex; justify-content:flex-end;">
+                <input type="number" class="form-input input-sm" id="bill-discount-percent" value="" min="0" max="100" style="width: 80px; text-align: right;" oninput="updateBillSummary()">
+              </span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label" id="summary-subtotal-label">Subtotal (excl. GST)</span>
+              <span class="summary-value" id="summary-subtotal">₹0.00</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">CGST (2.5%)</span>
+              <span class="summary-value" id="summary-cgst">₹0.00</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">SGST (2.5%)</span>
+              <span class="summary-value" id="summary-sgst">₹0.00</span>
+            </div>
+            <div class="summary-row total">
+              <span class="summary-label">Grand Total</span>
+              <span class="summary-value" style="display:flex; align-items:center; gap:5px; justify-content: flex-end;">
+                <span style="font-size:1.1rem; font-weight:700;">₹</span>
+                <input type="number" class="form-input input-sm" id="bill-grand-total-input" value="0.00" step="0.01" style="width: 110px; text-align: right; font-weight: 800; font-size: 1.1rem; border: 1px dashed var(--border-color); background: rgba(255,255,255,0.5); color: var(--text-primary);" oninput="handleManualTotalChange(this.value)">
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== INVENTORY ===== -->
+    <section class="page-section" id="page-inventory">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Inventory</h1>
+          <p class="page-subtitle">Manage your stock and products</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-primary" id="btn-add-item" onclick="openInventoryModal()">➕ Add Item</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <div class="section-header">
+          <div class="search-bar">
+            <span class="search-icon">🔍</span>
+            <input type="text" class="form-input" id="inventory-search" placeholder="Search items..." oninput="filterInventory()">
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="data-table" id="inventory-table">
+            <thead>
+              <tr><th>#</th><th>Item Name</th><th>Category</th><th>Price (₹)</th><th>Mts</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="inventory-body">
+              <tr><td colspan="7">
+                <div class="empty-state"><div class="empty-icon">📦</div><div class="empty-text">No items in inventory</div><div class="empty-sub">Add your first item to get started</div></div>
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== BARCODES ===== -->
+    <section class="page-section" id="page-barcodes">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Barcode Manager</h1>
+          <p class="page-subtitle">Create barcodes for your products — scan them at billing</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-danger" onclick="deleteAllBarcodes()">🚨 Delete All</button>
+          <input type="file" id="barcode-csv-upload" accept=".csv" style="display:none" onchange="importBarcodesCSV(event)">
+          <button class="btn btn-secondary" onclick="document.getElementById('barcode-csv-upload').click()">📤 Import CSV</button>
+          <button class="btn btn-success" onclick="exportBarcodesCSV()">📥 Export CSV</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <div class="barcode-grid">
+          <!-- Left: Create Form -->
+          <div>
+            <div class="card" style="margin-bottom:18px;">
+              <h3 class="section-title" style="margin-bottom:16px;">Create Barcode</h3>
+              <div class="form-group" style="margin-bottom:12px;">
+                <label class="form-label">Item Name</label>
+                <input type="text" class="form-input" id="barcode-item-name" placeholder="Enter item name">
+              </div>
+              <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                  <label class="form-label">Cost Price (₹)</label>
+                  <input type="number" class="form-input" id="barcode-cost-price" placeholder="0.00" min="0" step="0.01" oninput="calculateSellingPrice()">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Margin (%)</label>
+                  <input type="number" class="form-input" id="barcode-margin" placeholder="20" min="0" step="0.1" oninput="calculateSellingPrice()">
+                </div>
+              </div>
+              <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                  <label class="form-label">Selling Price (₹)</label>
+                  <input type="number" class="form-input" id="barcode-item-price" placeholder="0.00" min="0" step="0.01">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Stock (Mts)</label>
+                  <input type="number" class="form-input" id="barcode-item-stock" placeholder="0.00" min="0" step="0.01">
+                </div>
+              </div>
+              <div class="form-row" style="margin-bottom:16px;">
+                <div class="form-group">
+                  <label class="form-label">Barcode Value (optional)</label>
+                  <input type="text" class="form-input" id="barcode-custom-value" placeholder="Auto-generated if left empty">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Barcodes to Print</label>
+                  <input type="number" class="form-input" id="barcode-print-count" value="4" min="1">
+                </div>
+              </div>
+              <button class="btn btn-primary" onclick="generateBarcode()" style="width:100%;">🏷️ Generate Barcode</button>
+            </div>
+
+            <!-- Preview -->
+            <div class="barcode-preview-card" id="barcode-preview-card" style="display:none;">
+              <svg id="barcode-preview-svg"></svg>
+              <div class="barcode-item-details" id="barcode-preview-details"></div>
+              <div style="margin-top:14px;display:flex;gap:8px;justify-content:center;">
+                <button class="btn btn-success btn-sm" onclick="printSingleBarcode()">🖨️ Print Barcode</button>
+                <button class="btn btn-secondary btn-sm" onclick="saveBarcodeItem()">💾 Save to Inventory</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Saved Barcodes List -->
+          <div>
+            <div class="section-header">
+              <h3 class="section-title">Saved Barcodes</h3>
+              <div class="search-bar" style="max-width:250px;">
+                <span class="search-icon">🔍</span>
+                <input type="text" class="form-input" id="barcode-search" placeholder="Search barcodes..." oninput="filterBarcodes()">
+              </div>
+            </div>
+            <div class="barcode-list-grid" id="barcode-list-grid">
+              <div class="empty-state" style="grid-column:1/-1;">
+                <div class="empty-icon">🏷️</div>
+                <div class="empty-text">No barcodes created yet</div>
+                <div class="empty-sub">Create your first barcode using the form</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== ORDER LEDGER (TAILOR TRACKING) ===== -->
+    <section class="page-section" id="page-orders">
+      <!-- Lock Screen -->
+      <div id="order-ledger-lock" style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh;">
+        <div id="passcode-container" style="display: flex; gap: 30px; align-items: center; justify-content: center; transition: transform 0.1s ease;">
+          <div id="pass-btn-1" style="width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border-color); background: transparent; cursor: pointer; transition: background 0.2s ease, transform 0.2s ease;" onclick="handlePasscodeEntry('1')" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'"></div>
+          <div id="pass-btn-2" style="width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border-color); background: transparent; cursor: pointer; transition: background 0.2s ease, transform 0.2s ease;" onclick="handlePasscodeEntry('2')" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'"></div>
+          <div id="pass-btn-3" style="width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border-color); background: transparent; cursor: pointer; transition: background 0.2s ease, transform 0.2s ease;" onclick="handlePasscodeEntry('3')" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'"></div>
+          <div id="pass-btn-4" style="width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border-color); background: transparent; cursor: pointer; transition: background 0.2s ease, transform 0.2s ease;" onclick="handlePasscodeEntry('4')" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'"></div>
+        </div>
+      </div>
+
+      <!-- Secure Content -->
+      <div id="order-ledger-content" style="display: none;">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Order Ledger</h1>
+            <p class="page-subtitle">Track fabric, tailoring charges, advances, and pending balances</p>
+          </div>
+        <div class="page-actions" style="display:flex; gap:10px; align-items:center;">
+          <div class="search-bar" style="margin-bottom: 0;">
+            <span class="search-icon">🔍</span>
+            <input type="text" class="form-input" id="orders-search" placeholder="Search orders..." oninput="filterOrders()">
+          </div>
+          <button class="btn btn-primary" onclick="addManualOrder()">➕ Add Manual Entry</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <div class="table-container" style="overflow-x: auto; max-height: calc(100vh - 220px); overflow-y: auto;">
+          <table class="data-table" id="orders-table">
+            <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-input);">
+              <tr>
+                <th style="min-width: 100px;">Bill No</th>
+                <th style="min-width: 150px;">Customer Name</th>
+                <th style="min-width: 120px;">Fabric</th>
+                <th style="min-width: 120px;">Tailor</th>
+                <th style="min-width: 130px;">Delivery Date</th>
+                <th style="min-width: 100px;">Advance (₹)</th>
+                <th style="min-width: 100px;">Pending (₹)</th>
+                <th style="min-width: 100px;">Total (₹)</th>
+                <th style="width: 50px;"></th>
+              </tr>
+            </thead>
+            <tbody id="orders-body">
+              <tr>
+                <td colspan="9">
+                  <div class="empty-state">
+                    <div class="empty-icon">📒</div>
+                    <div class="empty-text">No orders tracked yet</div>
+                    <div class="empty-sub">Create your first bill and it will automatically appear here</div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+            <tfoot id="orders-footer" style="background: var(--bg-secondary); font-weight: 700; border-top: 2px solid var(--border-color); position: sticky; bottom: 0; z-index: 9;">
+              <!-- Totals row will be injected here -->
+            </tfoot>
+          </table>
+        </div>
+
+        <!-- Tailor Payment Summary Card -->
+        <div class="tailor-summary-card" id="tailor-summary-card" onclick="toggleTailorDetails()">
+          <div class="tsc-main">
+            <div class="tsc-info">
+              <span class="tsc-label">Tailor Payment Pending</span>
+              <span class="tsc-value" id="tailor-pending-display">₹0.00</span>
+            </div>
+            <div class="tsc-icon">🪡</div>
+          </div>
+          <div class="tsc-details" id="tailor-details-area">
+            <div class="tsc-row">
+              <span>Total Earned (Bills)</span>
+              <span id="tailor-total-earned">₹0.00</span>
+            </div>
+            <div class="tsc-row">
+              <span>Total Paid (Transactions)</span>
+              <span id="tailor-total-paid" style="color: var(--success-color);">₹0.00</span>
+            </div>
+            <div class="tsc-help">Click to expand/collapse details. Payments are tracked by adding "tailor" in transaction descriptions.</div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </section>
+
+    <!-- ===== ANALYTICS ===== -->
+    <section class="page-section" id="page-analytics">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Business Analytics</h1>
+          <p class="page-subtitle">Data-driven insights for your shop</p>
+        </div>
+        <div class="page-actions">
+          <select class="form-input" id="analytics-date-range" onchange="renderAnalytics()">
+            <option value="this_week">This Week</option>
+            <option value="this_month" selected>This Month</option>
+            <option value="last_month">Last Month</option>
+            <option value="last_3_months">Last 3 Months</option>
+            <option value="all_time">All Time</option>
+          </select>
+        </div>
+      </div>
+      <div class="page-content">
+        <!-- Business Health Snapshot -->
+        <div class="stats-grid" style="margin-bottom: 20px;">
+          <div class="stat-card">
+            <div class="stat-icon" style="background: rgba(34,197,94,0.1); color: #22c55e;">💵</div>
+            <div class="stat-info">
+              <div class="stat-value" id="analytics-revenue">₹0</div>
+              <div class="stat-label">Revenue <span id="analytics-revenue-growth" style="font-size:0.75rem; font-weight:700;"></span></div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background: rgba(59,130,246,0.1); color: #3b82f6;">📄</div>
+            <div class="stat-info">
+              <div class="stat-value" id="analytics-orders">0</div>
+              <div class="stat-label">Total Orders</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background: rgba(168,85,247,0.1); color: #a855f7;">🏷️</div>
+            <div class="stat-info">
+              <div class="stat-value" id="analytics-aov">₹0</div>
+              <div class="stat-label">Average Order Value</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background: rgba(239,68,68,0.1); color: #ef4444;">🚨</div>
+            <div class="stat-info">
+              <div class="stat-value" id="analytics-low-stock">0</div>
+              <div class="stat-label">Low Stock Alerts</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-grid">
+          <!-- Sales Analytics -->
+          <div class="card analytics-full-row">
+            <h3 class="section-title" style="margin-bottom:16px;">Sales Trend (Revenue & AOV)</h3>
+            <div style="height: 300px; width: 100%;">
+              <canvas id="analyticsSalesChart"></canvas>
+            </div>
+          </div>
+          
+          <div class="card">
+            <h3 class="section-title" style="margin-bottom:16px;">Revenue by Category</h3>
+            <div style="height: 260px; width: 100%;">
+              <canvas id="analyticsCategoryChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Customer Analytics -->
+          <div class="card">
+            <h3 class="section-title" style="margin-bottom:16px;">New vs Repeat Customers</h3>
+            <div style="height: 260px; width: 100%; display: flex; justify-content: center; align-items: center;">
+              <canvas id="analyticsCustomerPieChart"></canvas>
+            </div>
+          </div>
+
+          <div class="card analytics-full-row">
+            <h3 class="section-title" style="margin-bottom:16px;">Peak Hours (Billing Activity)</h3>
+            <div style="height: 260px; width: 100%;">
+              <canvas id="analyticsPeakHoursChart"></canvas>
+            </div>
+          </div>
+
+          <div class="card analytics-full-row">
+            <h3 class="section-title" style="margin-bottom:16px;">Top Customers</h3>
+            <div class="table-container" style="border:none;box-shadow:none; max-height: 250px; overflow-y: auto;">
+              <table class="data-table">
+                <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+                  <tr><th>Customer Name</th><th>Phone Number</th><th style="text-align:right;">Total Orders</th><th style="text-align:right;">Total Spend (₹)</th></tr>
+                </thead>
+                <tbody id="analytics-top-customers">
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Inventory Analytics -->
+          <div class="card">
+            <h3 class="section-title" style="margin-bottom:16px;">Fast Moving Items</h3>
+            <div class="table-container" style="border:none;box-shadow:none; max-height: 250px; overflow-y: auto;">
+              <table class="data-table">
+                <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+                  <tr><th>Item Name</th><th style="text-align:right;">Qty Sold</th><th style="text-align:right;">Revenue (₹)</th></tr>
+                </thead>
+                <tbody id="analytics-fast-moving">
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="section-title" style="margin-bottom:16px;">Slow Moving / Dead Stock (0 sales)</h3>
+            <div class="table-container" style="border:none;box-shadow:none; max-height: 250px; overflow-y: auto;">
+              <table class="data-table">
+                <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+                  <tr><th>Item Name</th><th style="text-align:right;">Current Stock</th></tr>
+                </thead>
+                <tbody id="analytics-dead-stock">
+                </tbody>
+              </table>
+            </div>
+          </div>
+          
+          <div class="card" style="grid-column: 1 / -1;">
+            <h3 class="section-title" style="margin-bottom:16px;">Inventory Valuation Summary</h3>
+            <div style="display:flex; justify-content:space-around; align-items:center; padding: 20px 0;">
+              <div style="text-align:center;">
+                <div style="font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Potential Revenue (In Stock)</div>
+                <div style="font-size: 1.8rem; font-weight: 800; color: #3b82f6;" id="analytics-stock-value">₹0</div>
+              </div>
+              <div style="font-size: 2rem; color: var(--text-muted);">vs</div>
+              <div style="text-align:center;">
+                <div style="font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Realized Revenue (Sold)</div>
+                <div style="font-size: 1.8rem; font-weight: 800; color: #22c55e;" id="analytics-sold-value">₹0</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== STAFF ===== -->
+    <section class="page-section" id="page-staff">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Staff</h1>
+          <p class="page-subtitle">Manage employees, track attendance & commissions</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-primary" onclick="openStaffModal()">➕ Add Staff</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <!-- Tabs -->
+        <div class="staff-tabs" id="staff-tabs">
+          <button class="staff-tab active" id="staff-tab-staff" onclick="switchStaffTab('staff')">👨‍💼 Staff & Commission</button>
+          <button class="staff-tab" id="staff-tab-attendance" onclick="switchStaffTab('attendance')">📅 Attendance</button>
+        </div>
+
+        <!-- Tab: Staff & Commission -->
+        <div id="staff-panel-staff">
+          <div class="table-container" style="margin-top:0;">
+            <table class="data-table" id="staff-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Name</th>
+                  <th>Role</th>
+                  <th>Phone</th>
+                  <th style="text-align:right;">Commission %</th>
+                  <th style="text-align:right;">Total Commission (₹)</th>
+                  <th style="text-align:center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="staff-table-body">
+                <tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👨‍💼</div><div class="empty-text">No staff added yet</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab: Attendance -->
+        <div id="staff-panel-attendance" style="display:none;">
+          <!-- Daily Attendance -->
+          <div class="card" style="margin-bottom:18px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;">
+              <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                <div class="form-group" style="margin-bottom:0; flex-shrink:0;">
+                  <label class="form-label">Select Date (Daily Entry)</label>
+                  <input type="date" class="form-input" id="attendance-date" onchange="renderAttendance(this.value)">
+                </div>
+                <div id="attendance-summary" style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 24px;"></div>
+              </div>
+            </div>
+          </div>
+          <div id="attendance-grid" style="margin-bottom: 30px;"></div>
+
+          <!-- Monthly Report -->
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
+              <h3 class="section-title" style="margin-bottom:0;">Monthly Attendance Report</h3>
+              <div class="form-group" style="margin-bottom:0; width: 200px;">
+                <input type="month" class="form-input" id="attendance-month" onchange="renderMonthlyAttendanceReport(this.value)">
+              </div>
+            </div>
+            <div class="table-container" style="border:none;box-shadow:none;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Staff Name</th>
+                    <th>Role</th>
+                    <th style="text-align:center;">✅ Present</th>
+                    <th style="text-align:center;">🌓 Half-Day</th>
+                    <th style="text-align:center;">❌ Absent</th>
+                    <th style="text-align:right;">Total Effective Days</th>
+                  </tr>
+                </thead>
+                <tbody id="attendance-monthly-report">
+                  <tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📅</div><div class="empty-text">Select a month to view report</div></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== SHOP DETAILS ===== -->
+    <section class="page-section" id="page-shopdetails">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Shop Details</h1>
+          <p class="page-subtitle">Configure your shop information for professional invoices</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-primary" id="btn-save-shop" onclick="saveShopDetails()">💾 Save Details</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <div class="shop-details-grid">
+          <!-- Logo Upload -->
+          <div class="card shop-logo-card">
+            <h3 class="section-title" style="margin-bottom:16px;">Shop Logo</h3>
+            <div class="logo-upload-area" id="logo-upload-area" onclick="document.getElementById('shop-logo-input').click()">
+              <div class="logo-preview" id="logo-preview">
+                <div class="logo-placeholder" id="logo-placeholder">
+                  <span style="font-size:2.5rem;">🏪</span>
+                  <span style="font-size:0.85rem;color:var(--text-muted);">Click to upload logo</span>
+                </div>
+                <img id="logo-preview-img" src="" alt="Shop Logo" style="display:none;max-width:180px;max-height:180px;border-radius:var(--radius-md);">
+              </div>
+              <input type="file" id="shop-logo-input" accept="image/*" style="display:none;" onchange="handleLogoUpload(event)">
+            </div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:10px;width:100%;" onclick="removeLogo()">🗑️ Remove Logo</button>
+          </div>
+
+          <!-- QR Code Upload -->
+          <div class="card shop-logo-card">
+            <h3 class="section-title" style="margin-bottom:16px;">Print QR Code</h3>
+            <div class="logo-upload-area" id="qr-upload-area" onclick="document.getElementById('shop-qr-input').click()">
+              <div class="logo-preview" id="qr-preview">
+                <div class="logo-placeholder" id="qr-placeholder">
+                  <span style="font-size:2.5rem;">📱</span>
+                  <span style="font-size:0.85rem;color:var(--text-muted);">Click to upload QR code</span>
+                </div>
+                <img id="qr-preview-img" src="" alt="Shop QR Code" style="display:none;max-width:180px;max-height:180px;border-radius:var(--radius-md);">
+              </div>
+              <input type="file" id="shop-qr-input" accept="image/*" style="display:none;" onchange="handleQrUpload(event)">
+            </div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:10px;width:100%;" onclick="removeQrCode()">🗑️ Remove QR Code</button>
+          </div>
+
+          <!-- Appearance Settings -->
+          <div class="card">
+            <h3 class="section-title" style="margin-bottom:16px;">Appearance Settings</h3>
+            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">Choose your preferred application theme.</p>
+            <div style="display:flex;gap:12px;">
+              <button class="btn btn-outline" id="theme-light-btn" onclick="setTheme('light')" style="flex:1;">☀️ Light Mode</button>
+              <button class="btn btn-outline" id="theme-dark-btn" onclick="setTheme('dark')" style="flex:1;">🌙 Dark Mode</button>
+            </div>
+          </div>
+
+          <!-- Cloud Database Settings -->
+          <div class="card" style="grid-column: 1 / -1;">
+            <h3 class="section-title" style="margin-bottom:16px;">⚡ Cloud Database Sync (Supabase)</h3>
+            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">Connect your free online Supabase database to sync bills, inventory, and staff seamlessly across all devices.</p>
+            <div class="form-row" style="margin-bottom:14px;display:flex;gap:12px;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Supabase Project URL</label>
+                <input type="text" class="form-input" id="cloud-supabase-url" placeholder="https://your-project.supabase.co">
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Supabase Anon Key</label>
+                <input type="password" class="form-input" id="cloud-supabase-key" placeholder="your-anon-key">
+              </div>
+            </div>
+            <div style="display:flex;gap:12px;">
+              <button class="btn btn-primary" onclick="saveCloudSettings()">⚡ Connect & Sync Cloud</button>
+              <button class="btn btn-secondary" onclick="pullCloudData()">📥 Pull Latest from Cloud</button>
+            </div>
+          </div>
+
+          <!-- Shop Info -->
+          <div class="card">
+            <h3 class="section-title" style="margin-bottom:16px;">Shop Information</h3>
+            <div class="form-group" style="margin-bottom:14px;">
+              <label class="form-label">Shop Name</label>
+              <input type="text" class="form-input" id="shop-name" placeholder="Enter your shop name">
+            </div>
+            <div class="form-group" style="margin-bottom:14px;">
+              <label class="form-label">Address</label>
+              <textarea class="form-input" id="shop-address" rows="3" placeholder="Enter full shop address" style="resize:vertical;"></textarea>
+            </div>
+            <div class="form-row" style="margin-bottom:14px;">
+              <div class="form-group">
+                <label class="form-label">Phone Number</label>
+                <input type="tel" class="form-input" id="shop-phone" placeholder="Shop phone number">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Email</label>
+                <input type="email" class="form-input" id="shop-email" placeholder="Shop email (optional)">
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:14px;">
+              <label class="form-label">GSTIN (optional)</label>
+              <input type="text" class="form-input" id="shop-gstin" placeholder="Enter GSTIN number">
+            </div>
+            <div class="form-group" style="margin-bottom:14px;border-top:1px solid var(--border-color);padding-top:14px;">
+              <label class="form-label">Next Bill Number Sequence</label>
+              <input type="number" class="form-input" id="shop-next-bill" placeholder="e.g. 1">
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Current sequence is at ${getBillCounter()}. Set this to 1 and CLEAR ALL BILLS if you want to start fresh from KALP-0001.</p>
+            </div>
+          </div>
+
+          <!-- Danger Zone -->
+          <div class="card" style="border:1px solid var(--danger-border);background:var(--danger-bg);">
+            <h1 class="section-title" style="margin-bottom:16px;color:#ef4444;font-size:1.1rem;">⚠️ Danger Zone</h1>
+            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">This will permanently delete all your bills, orders, and transaction history. Inventory and Barcodes will stay.</p>
+            <button class="btn btn-danger" style="width:100%;" onclick="clearAllBillsData()">🗑️ Delete All Bills & Ledger Data</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ===== Ledger Modal (Cash/Bank Details) ===== -->
+<div class="modal-overlay" id="ledger-modal">
+  <div class="modal" style="max-width: 800px;">
+    <div class="modal-header">
+      <h3 class="modal-title" id="ledger-modal-title">Transaction Ledger</h3>
+      <button class="modal-close" onclick="closeLedgerModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 15px; background: var(--bg-secondary); border-radius: var(--radius-md);">
+        <div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Current Balance</div>
+          <div style="font-size: 1.5rem; font-weight: 800; color: var(--primary-color);" id="ledger-total-display">₹0.00</div>
+        </div>
+        <button class="btn btn-primary" onclick="showAdjustmentForm()">➕ Add Manual Adjustment</button>
+      </div>
+
+      <!-- Adjustment Form (Hidden by default) -->
+      <div id="adjustment-form" style="display: none; margin-bottom: 20px; padding: 15px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #f9fafb;">
+        <h4 style="margin-bottom: 12px; font-size: 0.9rem;">New Transaction</h4>
+        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+          <button class="btn btn-outline btn-sm active" id="adj-type-add" data-adj-type="add" onclick="setAdjustmentType('add')">📈 Add Money</button>
+          <button class="btn btn-outline btn-sm" id="adj-type-sub" data-adj-type="sub" onclick="setAdjustmentType('sub')">📉 Withdrawal</button>
+          <input type="hidden" id="adj-type" value="add">
+        </div>
+        <div class="form-row" style="margin-bottom: 10px;">
+          <div class="form-group" style="flex: 2;">
+            <label class="form-label">Description</label>
+            <input type="text" class="form-input" id="adj-desc" placeholder="e.g. Opening Balance, Rent, etc.">
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label">Amount (₹)</label>
+            <input type="number" class="form-input" id="adj-amount" placeholder="0.00" min="0">
+          </div>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button class="btn btn-ghost btn-sm" onclick="hideAdjustmentForm()">Cancel</button>
+          <button class="btn btn-success btn-sm" id="adj-save-btn" onclick="saveManualAdjustment()">Save Transaction</button>
+        </div>
+      </div>
+
+      <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Type</th>
+              <th style="text-align: right;">Amount (₹)</th>
+              <th style="text-align: center;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="ledger-body">
+            <!-- Transactions injected here -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Sales Chart Detailed View Modal ===== -->
+<div class="modal-overlay" id="chart-detail-modal">
+  <div class="modal" style="max-width: 950px; width: 95%;">
+    <div class="modal-header">
+      <h3 class="modal-title" id="chart-detail-title">Bills for Period</h3>
+      <button class="modal-close" onclick="closeChartDetailModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="table-container" style="max-height: 500px; overflow-y: auto;">
+        <table class="data-table">
+          <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+            <tr>
+              <th>Bill #</th>
+              <th>Customer</th>
+              <th>Date</th>
+              <th style="text-align: right;">Tailor (₹)</th>
+              <th style="text-align: right;">Advance (₹)</th>
+              <th style="text-align: right;">Total (₹)</th>
+              <th>Status</th>
+              <th style="text-align: center;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="chart-detail-tbody">
+            <!-- Table rows injected here -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeChartDetailModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Inventory Modal ===== -->
+<div class="modal-overlay" id="inventory-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 class="modal-title" id="modal-title">Add New Item</h3>
+      <button class="modal-close" onclick="closeInventoryModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-item-id">
+      <div class="form-group">
+        <label class="form-label">Item Name</label>
+        <input type="text" class="form-input" id="modal-item-name" placeholder="Enter item name">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Category</label>
+        <input type="text" class="form-input" id="modal-item-category" placeholder="Enter category">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Price (₹)</label>
+          <input type="number" class="form-input" id="modal-item-price" placeholder="0.00" min="0" step="0.01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Stock (Mts)</label>
+          <input type="number" class="form-input" id="modal-item-stock" placeholder="0.00" min="0" step="0.01">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeInventoryModal()">Cancel</button>
+      <button class="btn btn-primary" id="modal-save-btn" onclick="saveInventoryItem()">Add Item</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Staff Modal ===== -->
+<div class="modal-overlay" id="staff-modal">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h3 class="modal-title" id="staff-modal-title">Add Staff Member</h3>
+      <button class="modal-close" onclick="closeStaffModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-staff-id">
+      <div class="form-group">
+        <label class="form-label">Full Name</label>
+        <input type="text" class="form-input" id="staff-name" placeholder="e.g. Nabeel">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Role / Designation</label>
+        <input type="text" class="form-input" id="staff-role" placeholder="e.g. Salesperson">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone Number</label>
+        <input type="tel" class="form-input" id="staff-phone" placeholder="Optional">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Commission Rate (%)</label>
+        <input type="number" class="form-input" id="staff-commission" placeholder="1" min="0" max="100" step="0.1" value="1">
+      </div>
+      <div class="form-group">
+        <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="staff-attendance-only" style="width:16px;height:16px;">
+          Attendance only (no billing commission)
+        </label>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">Tick this for housekeeping / support staff who won't be assigned to bills.</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeStaffModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveStaffModal()">Save Staff</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Analytics Drill-down Modal ===== -->
+<div class="modal-overlay" id="analytics-drilldown-modal">
+  <div class="modal" style="max-width:800px;">
+    <div class="modal-header">
+      <h3 class="modal-title" id="analytics-drilldown-title">Data Detail</h3>
+      <button class="modal-close" onclick="closeAnalyticsDrilldown()">&times;</button>
+    </div>
+    <div class="modal-body" style="padding: 0;">
+      <div class="table-container" style="margin: 0; border: none; box-shadow: none; max-height: 400px; overflow-y: auto;">
+        <table class="data-table" id="analytics-drilldown-table">
+          <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-input);">
+            <tr>
+              <th>Date</th>
+              <th>Bill No</th>
+              <th>Customer</th>
+              <th>Phone</th>
+              <th style="text-align:right;">Amount (₹)</th>
+            </tr>
+          </thead>
+          <tbody id="analytics-drilldown-body">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Toast Container ===== -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ===== Hidden Print Area for Barcodes ===== -->
+<div class="barcode-print-area" id="barcode-print-area"></div>
+
+<!-- ===== Hidden Print Area for Professional Bill ===== -->
+<div id="bill-professional-print" class="bill-professional-print"></div>
+
+<!-- ===== Customer Data Modal ===== -->
+<div class="modal-overlay" id="customer-modal">
+  <div class="modal" style="max-width: 800px; width: 95%;">
+    <div class="modal-header">
+      <h3 class="modal-title">👥 Customer Data Dashboard</h3>
+      <button class="modal-close" onclick="closeCustomerModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height: 60vh; overflow-y: auto; padding: 0;">
+      <table class="data-table" style="box-shadow: none; border-radius: 0; width: 100%;">
+        <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+          <tr>
+            <th>Name</th>
+            <th>Phone</th>
+            <th>Email</th>
+            <th>Last Visit</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="customer-table-body">
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+      <span class="text-muted" style="font-size: 0.85rem;" id="customer-modal-count">0 customers found</span>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-ghost" onclick="closeCustomerModal()">Close</button>
+        <button class="btn btn-success" onclick="exportCustomersCSV()">📥 Export CSV</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Deliveries Modal ===== -->
+<div class="modal-overlay" id="deliveries-modal">
+  <div class="modal" style="max-width: 800px; width: 95%;">
+    <div class="modal-header">
+      <h3 class="modal-title">📦 Fabric Deliveries</h3>
+      <button class="modal-close" onclick="closeDeliveriesModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="padding: 0; display: flex; flex-direction: column;">
+      <div style="display: flex; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary);">
+        <button class="btn btn-ghost" id="tab-del-pending" style="flex:1; border-radius:0; border-bottom: 2px solid var(--primary-color); font-weight:bold; color:var(--primary-color);" onclick="switchDeliveriesTab('pending')">Pending</button>
+        <button class="btn btn-ghost" id="tab-del-completed" style="flex:1; border-radius:0; border-bottom: 2px solid transparent; color:var(--text-muted);" onclick="switchDeliveriesTab('completed')">Delivered</button>
+      </div>
+      <div style="max-height: 60vh; overflow-y: auto;">
+        <table class="data-table" style="box-shadow: none; border-radius: 0; width: 100%;">
+          <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+            <tr>
+              <th>Delivery Date</th>
+              <th>Bill #</th>
+              <th>Customer</th>
+              <th style="text-align: right;">Pending (₹)</th>
+              <th style="text-align: center;">Tailor Paid</th>
+              <th style="text-align: center;" id="deliveries-action-header">Delivered</th>
+            </tr>
+          </thead>
+          <tbody id="deliveries-table-body">
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeDeliveriesModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Deleted Bills (Recycle Bin) Modal ===== -->
+<div class="modal-overlay" id="deleted-bills-modal">
+  <div class="modal" style="max-width: 850px; width: 95%;">
+    <div class="modal-header">
+      <h3 class="modal-title">🗑️ Recycle Bin (Deleted Bills)</h3>
+      <button class="modal-close" onclick="closeDeletedBillsModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height: 60vh; overflow-y: auto; padding: 0;">
+      <table class="data-table" style="box-shadow: none; border-radius: 0; width: 100%;">
+        <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-secondary);">
+          <tr>
+            <th>Bill #</th>
+            <th>Customer</th>
+            <th>Deleted On</th>
+            <th style="text-align: right;">Amount (₹)</th>
+            <th style="text-align: center;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="deleted-bills-table-body">
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-footer" style="display:flex; justify-content:space-between;">
+      <button class="btn btn-danger" onclick="emptyRecycleBin()">🚨 Empty Recycle Bin</button>
+      <button class="btn btn-ghost" onclick="closeDeletedBillsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Daily Expense Modal ===== -->
+<div class="modal-overlay" id="daily-expense-modal">
+  <div class="modal" style="max-width: 400px;">
+    <div class="modal-header">
+      <h3 class="modal-title">➕ Add Daily Expense/Entry</h3>
+      <button class="modal-close" onclick="closeDailyExpenseModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Type</label>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-outline btn-sm active" id="btn-expense-type-out" style="flex:1;" onclick="setDailyExpenseType('out')">📉 Expense (Out)</button>
+          <button class="btn btn-outline btn-sm" id="btn-expense-type-in" style="flex:1;" onclick="setDailyExpenseType('in')">📈 Income (In)</button>
+        </div>
+        <input type="hidden" id="daily-expense-type" value="out">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Payment Method</label>
+        <select class="form-input" id="daily-expense-method">
+          <option value="Cash">💵 Cash</option>
+          <option value="Bank">🏦 Bank / UPI</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input type="text" class="form-input" id="daily-expense-desc" placeholder="e.g. Tea, Rent, Opening Balance">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Amount (₹)</label>
+        <input type="number" class="form-input" id="daily-expense-amount" placeholder="0.00" min="0">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeDailyExpenseModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDailyExpense()">Save Entry</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
