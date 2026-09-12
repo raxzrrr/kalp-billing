@@ -157,6 +157,62 @@ body {
   text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px;
 }
 
+/* Sync Status Badge */
+.sync-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 5px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--transition-fast);
+}
+
+.sync-status-badge:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.sync-dot {
+  width: 7.5px;
+  height: 7.5px;
+  border-radius: 50%;
+  display: inline-block;
+  transition: all var(--transition-fast);
+}
+
+.sync-dot.synced {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+
+.sync-dot.syncing {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
+  animation: syncPulse 0.9s infinite alternate;
+}
+
+.sync-dot.offline {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+}
+
+.sync-text {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #c8c8d8;
+  letter-spacing: 0.3px;
+}
+
+@keyframes syncPulse {
+  from { opacity: 0.35; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1.15); }
+}
+
 .sidebar-nav { padding: 14px 10px; flex: 1; }
 
 .nav-label {

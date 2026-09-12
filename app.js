@@ -42,15 +42,168 @@ function initSupabase() {
   }
 }
 
+// --- Offline Queue & Sync Status Management ---
+const OFFLINE_QUEUE_KEY = 'kalp_offline_queue';
+
+function getOfflineQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOfflineQueue(queue) {
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+  updateSyncUI();
+}
+
+function addToOfflineQueue(key, data) {
+  const queue = getOfflineQueue();
+  const existingIdx = queue.findIndex(item => item.key === key);
+  if (existingIdx >= 0) {
+    queue[existingIdx] = { key, data, timestamp: Date.now() };
+  } else {
+    queue.push({ key, data, timestamp: Date.now() });
+  }
+  saveOfflineQueue(queue);
+  console.log(`📥 Added ${key} to offline queue. Total pending:`, queue.length);
+}
+
+function updateSyncUI(forceState = null, forceText = null) {
+  const dot = document.getElementById('sync-dot');
+  const text = document.getElementById('sync-text');
+  if (!dot || !text) return;
+
+  const queue = getOfflineQueue();
+  const isOnline = navigator.onLine;
+
+  if (forceState) {
+    dot.className = `sync-dot ${forceState}`;
+    text.textContent = forceText || (forceState === 'synced' ? 'Cloud Synced' : forceState === 'syncing' ? 'Syncing...' : 'Offline');
+    return;
+  }
+
+  if (!isOnline) {
+    dot.className = 'sync-dot offline';
+    text.textContent = queue.length > 0 ? `Offline (${queue.length} pending)` : 'Offline';
+  } else if (queue.length > 0) {
+    dot.className = 'sync-dot syncing';
+    text.textContent = `Pending (${queue.length})`;
+  } else {
+    dot.className = 'sync-dot synced';
+    text.textContent = 'Cloud Synced';
+  }
+}
+
+async function flushOfflineQueue() {
+  if (!navigator.onLine || !supabaseClient) {
+    updateSyncUI();
+    return;
+  }
+
+  const queue = getOfflineQueue();
+  if (queue.length === 0) {
+    updateSyncUI('synced', 'Cloud Synced');
+    return;
+  }
+
+  updateSyncUI('syncing', `Syncing ${queue.length}...`);
+
+  const remainingQueue = [];
+  for (const item of queue) {
+    try {
+      const { error } = await supabaseClient
+        .from('kalp_store')
+        .upsert({ key: item.key, value: item.data, updated_at: new Date(item.timestamp).toISOString() });
+
+      if (error) {
+        console.error('Failed to flush offline queue item:', item.key, error);
+        remainingQueue.push(item);
+      }
+    } catch (err) {
+      console.error('Network exception flushing item:', item.key, err);
+      remainingQueue.push(item);
+    }
+  }
+
+  saveOfflineQueue(remainingQueue);
+  if (remainingQueue.length === 0) {
+    updateSyncUI('synced', 'Cloud Synced');
+    showToast('All offline changes synced to cloud!', 'success');
+  } else {
+    updateSyncUI('offline', `${remainingQueue.length} pending`);
+  }
+}
+
+async function triggerManualSync() {
+  if (!navigator.onLine) {
+    showToast('You are currently offline. Changes are saved locally.', 'warning');
+    updateSyncUI();
+    return;
+  }
+  if (!supabaseClient) {
+    showToast('Supabase not connected. Check Shop Details.', 'error');
+    return;
+  }
+
+  updateSyncUI('syncing', 'Syncing...');
+  showToast('Syncing with Supabase cloud...', 'info');
+
+  // 1. Flush any pending offline queue
+  await flushOfflineQueue();
+
+  // 2. Pull latest from cloud
+  const pulled = await pullFromCloud();
+  if (pulled) {
+    updateSyncUI('synced', 'Cloud Synced');
+    showToast('Cloud database in sync!', 'success');
+    rebuildLedgerCache();
+    handleRoute();
+  } else {
+    updateSyncUI('offline', 'Sync Error');
+    showToast('Cloud sync encountered an issue.', 'error');
+  }
+}
+
+// Network state listeners
+window.addEventListener('online', () => {
+  showToast('Network restored! Syncing offline queue...', 'info');
+  flushOfflineQueue();
+});
+
+window.addEventListener('offline', () => {
+  updateSyncUI('offline', 'Offline');
+  showToast('Operating offline. Changes will queue and sync when reconnected.', 'warning');
+});
+
 async function syncToCloud(key, data) {
-  if (!supabaseClient) return;
+  if (!supabaseClient || !navigator.onLine) {
+    addToOfflineQueue(key, data);
+    return;
+  }
+
+  updateSyncUI('syncing', 'Syncing...');
+
   try {
     const { error } = await supabaseClient
       .from('kalp_store')
       .upsert({ key: key, value: data, updated_at: new Date().toISOString() });
-    if (error) console.error('Cloud sync error for key', key, error);
+
+    if (error) {
+      console.error('Cloud sync error for key', key, error);
+      addToOfflineQueue(key, data);
+    } else {
+      const queue = getOfflineQueue();
+      if (queue.length === 0) {
+        updateSyncUI('synced', 'Cloud Synced');
+      } else {
+        flushOfflineQueue();
+      }
+    }
   } catch (err) {
     console.error('Cloud sync exception:', err);
+    addToOfflineQueue(key, data);
   }
 }
 
@@ -254,10 +407,17 @@ window.addEventListener('DOMContentLoaded', async () => {
   const savedTheme = localStorage.getItem(STORAGE_KEYS.theme) || 'light';
   setTheme(savedTheme);
   
-  // Initialize cloud sync & fetch latest database state
+  // Initialize cloud sync & visual sync status
   initSupabase();
-  if (supabaseClient) {
+  updateSyncUI();
+
+  if (supabaseClient && navigator.onLine) {
+    updateSyncUI('syncing', 'Syncing...');
+    await flushOfflineQueue();
     await pullFromCloud();
+    updateSyncUI('synced', 'Cloud Synced');
+  } else {
+    updateSyncUI();
   }
 
   rebuildLedgerCache();
