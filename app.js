@@ -13,7 +13,8 @@ const STORAGE_KEYS = {
   theme: 'kalp_theme',
   deletedBills: 'kalp_deleted_bills',
   staff: 'kalp_staff',
-  attendance: 'kalp_attendance'
+  attendance: 'kalp_attendance',
+  consignments: 'kalp_consignments'
 };
 
 // --- Global Cache for Performance
@@ -352,14 +353,25 @@ async function pullFromCloud() {
     const { data, error } = await supabaseClient
       .from('kalp_store')
       .select('key, value');
+    if (error) {
+      console.error('kalp_store pull error:', error);
+    }
     if (data && data.length > 0) {
       data.forEach(row => {
-        if (row.key && row.value !== undefined) {
-          let val = row.value;
-          if (typeof val === 'string') {
-            try { val = JSON.parse(val); } catch(e) {}
-          }
-          appCache[row.key] = val;
+        if (!row.key || row.value === undefined) return;
+        let val = row.value;
+        if (typeof val === 'string') {
+          try { val = JSON.parse(val); } catch (e) { /* keep string */ }
+        }
+
+        appCache[row.key] = val;
+
+        // Scalars (theme, counters) are stored as plain strings in localStorage
+        if (row.key === STORAGE_KEYS.theme ||
+            row.key === STORAGE_KEYS.billCounter ||
+            row.key === STORAGE_KEYS.barcodeCounter) {
+          localStorage.setItem(row.key, String(val));
+        } else {
           localStorage.setItem(row.key, JSON.stringify(val));
         }
       });
@@ -372,8 +384,12 @@ async function pullFromCloud() {
       .select('raw_data, bill_number')
       .order('id', { ascending: true });
 
+    if (billsResult.error) {
+      console.error('kalp_bills pull error:', billsResult.error);
+    }
+
     if (billsResult.data && billsResult.data.length > 0) {
-      const bills = billsResult.data.map(r => r.raw_data);
+      const bills = billsResult.data.map(r => r.raw_data).filter(Boolean);
       appCache[STORAGE_KEYS.bills] = bills;
       localStorage.setItem(STORAGE_KEYS.bills, JSON.stringify(bills));
 
@@ -467,6 +483,38 @@ function setData(key, data) {
   if (key === STORAGE_KEYS.bills || key === STORAGE_KEYS.adjustments) {
     setTimeout(rebuildLedgerCache, 0);
   }
+  setTimeout(updateStorageMeter, 50);
+}
+
+function updateStorageMeter() {
+  try {
+    let totalBytes = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k) {
+        const val = localStorage.getItem(k) || '';
+        totalBytes += (k.length + val.length) * 2;
+      }
+    }
+    const totalMB = totalBytes / (1024 * 1024);
+    const maxMB = 5.0;
+    const pct = Math.min(100, Math.round((totalMB / maxMB) * 100));
+
+    const textEl = document.getElementById('storage-text');
+    const barEl = document.getElementById('storage-bar');
+    const mbEl = document.getElementById('storage-mb');
+
+    if (textEl) textEl.textContent = `${pct}%`;
+    if (mbEl) mbEl.textContent = totalMB.toFixed(2);
+    if (barEl) {
+      barEl.style.width = `${pct}%`;
+      if (pct > 80) barEl.style.background = '#ef4444';
+      else if (pct > 60) barEl.style.background = '#f59e0b';
+      else barEl.style.background = '#4caf50';
+    }
+  } catch (e) {
+    console.warn('Storage meter notice:', e);
+  }
 }
 
 function getBillCounter() {
@@ -535,6 +583,7 @@ function navigateTo(page) {
     }
     renderOrdersTable();
   }
+  if (page === 'consignment') renderConsignments();
   if (page === 'staff') renderStaffPage();
   if (page === 'shopdetails') loadShopDetails();
 }
@@ -565,23 +614,51 @@ function setTheme(theme) {
 window.addEventListener('DOMContentLoaded', async () => {
   const savedTheme = localStorage.getItem(STORAGE_KEYS.theme) || 'light';
   setTheme(savedTheme);
-  
+
+  const bootEl = document.getElementById('cloud-boot-overlay');
+  const bootText = document.getElementById('cloud-boot-text');
+  const showBoot = (msg) => {
+    if (bootEl) bootEl.style.display = 'flex';
+    if (bootText) bootText.textContent = msg || 'Connecting to cloud…';
+  };
+  const hideBoot = () => {
+    if (bootEl) bootEl.style.display = 'none';
+  };
+
   // Initialize cloud sync & visual sync status
   initSupabase();
   updateSyncUI();
 
+  const hasLocalBills = (getData(STORAGE_KEYS.bills) || []).length > 0;
+
   if (supabaseClient && navigator.onLine) {
+    showBoot('Syncing with Supabase…');
     updateSyncUI('syncing', 'Syncing...');
     await flushOfflineQueue();
-    await pullFromCloud();
-    updateSyncUI('synced', 'Cloud Synced');
+    const pulled = await pullFromCloud();
+    if (pulled) {
+      updateSyncUI('synced', 'Cloud Synced');
+    } else if (hasLocalBills) {
+      updateSyncUI('synced', 'Local + Cloud');
+    } else {
+      updateSyncUI('offline', 'Cloud empty / error');
+      showToast('Cloud has no data yet. Import a backup or push seed data.', 'warning');
+    }
+  } else if (!navigator.onLine) {
+    updateSyncUI('offline', 'Offline');
+    if (!hasLocalBills) {
+      showToast('Offline and no local data. Connect to the internet once to load from Supabase.', 'warning');
+    }
   } else {
-    updateSyncUI();
+    updateSyncUI('offline', 'Not connected');
+    showToast('Supabase not connected. Check Shop Details → Cloud Database Sync.', 'warning');
   }
 
+  hideBoot();
   rebuildLedgerCache();
   seedDefaultStaff(); // Ensure default staff exist
   populateStaffDropdown(); // Populate billing dropdown
+  updateStorageMeter();
   handleRoute();
 });
 
@@ -713,6 +790,16 @@ function refreshDashboard() {
   document.getElementById('stat-cash-hand').textContent = formatCurrency(cashTotal);
   document.getElementById('stat-bank-balance').textContent = formatCurrency(bankTotal);
   
+  // Pending orders
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  let totalPendingOrders = 0;
+  orders.forEach(o => {
+    const p = parseFloat(o.pending) || 0;
+    if (p > 0) totalPendingOrders += p;
+  });
+  const pendingStatEl = document.getElementById('stat-pending-amount');
+  if (pendingStatEl) pendingStatEl.textContent = formatCurrency(totalPendingOrders);
+
   const customersEl = document.getElementById('stat-total-customers');
   if (customersEl) customersEl.textContent = uniqueCustomers.size;
 
@@ -1233,13 +1320,42 @@ function editBill(id) {
     deliveryDateEl.value = bill.deliveryDate || '';
   }
 
+  const orderNumberEl = document.getElementById('bill-order-number');
+  if (orderNumberEl) orderNumberEl.value = bill.orderNumber || '';
+
+  const advancePaidEl = document.getElementById('bill-advance-paid');
+  if (advancePaidEl) advancePaidEl.value = bill.advancePaid || 0;
+
   const noTailorCb = document.getElementById('bill-no-tailor');
   const tailorAmountEl = document.getElementById('bill-tailor-amount');
-  if (noTailorCb) noTailorCb.checked = !!bill.noTailor;
+  if (noTailorCb) {
+    noTailorCb.checked = !!bill.noTailor;
+    toggleTailoringSection(!!bill.noTailor);
+  }
   if (tailorAmountEl) {
-    tailorAmountEl.disabled = !!bill.noTailor;
     tailorAmountEl.value = bill.tailorAmount || '';
   }
+
+  const accEl = document.getElementById('tailor-accessories');
+  if (accEl) accEl.value = bill.tailorAccessories || '';
+  const handEl = document.getElementById('tailor-handwork');
+  if (handEl) handEl.value = bill.tailorHandwork || '';
+  const embEl = document.getElementById('tailor-embroidery');
+  if (embEl) embEl.value = bill.tailorEmbroidery || '';
+  const discEl = document.getElementById('tailor-discount');
+  if (discEl) discEl.value = bill.tailorDiscount || '';
+  const prioEl = document.getElementById('tailor-priority');
+  if (prioEl) prioEl.checked = !!bill.tailorPriority;
+
+  const stitchList = document.getElementById('stitching-items-list');
+  if (stitchList) {
+    stitchList.innerHTML = '';
+    if (Array.isArray(bill.tailoringItems) && bill.tailoringItems.length > 0) {
+      bill.tailoringItems.forEach(item => addStitchingItemRow(item));
+    }
+  }
+  calculateTailorAmount();
+  updatePendingAmount();
 
   // Outfit Details
   const instructionsEl = document.getElementById('bill-outfit-instructions');
@@ -1511,17 +1627,23 @@ function getUniqueCustomers() {
     const isWalkin = (!b.customerName || b.customerName === 'Walk-in Customer') && !b.phone && !b.email;
     if (isWalkin) return;
     
-    const key = b.phone || b.email || b.customerName;
+    const key = (b.phone && b.phone.trim() !== '-') ? b.phone.trim() : (b.email || b.customerName);
     if (!key) return;
+
+    const grand = parseFloat(b.grandTotal) || 0;
 
     if (!customersMap[key]) {
       customersMap[key] = {
         name: b.customerName && b.customerName !== 'Walk-in Customer' ? b.customerName : 'Unknown',
         phone: b.phone || '-',
         email: b.email || '-',
-        lastVisit: b.date
+        lastVisit: b.date,
+        totalSpent: grand,
+        totalPurchases: 1
       };
     } else {
+      customersMap[key].totalSpent += grand;
+      customersMap[key].totalPurchases += 1;
       if (b.date > customersMap[key].lastVisit) {
         customersMap[key].lastVisit = b.date;
       }
@@ -1531,20 +1653,59 @@ function getUniqueCustomers() {
     }
   });
 
-  return Object.values(customersMap).sort((a,b) => b.lastVisit.localeCompare(a.lastVisit));
+  return Object.values(customersMap).sort((a,b) => (b.lastVisit || '').localeCompare(a.lastVisit || ''));
 }
 
 function openCustomerModal() {
+  const modal = document.getElementById('customer-modal');
+  if (modal) {
+    modal.classList.add('active');
+    renderCustomerModal();
+  }
+}
+
+function closeCustomerModal() {
+  const modal = document.getElementById('customer-modal');
+  if (modal) modal.classList.remove('active');
+}
+
+function renderCustomerModal() {
   const customers = getUniqueCustomers();
+  const searchInput = document.getElementById('customer-search');
+  const sortSelect = document.getElementById('customer-sort');
+  const filterText = searchInput ? searchInput.value.trim().toLowerCase() : '';
+  const sortBy = sortSelect ? sortSelect.value : 'recent';
+
+  let filtered = customers.filter(c => {
+    if (!filterText) return true;
+    return (
+      (c.name && c.name.toLowerCase().includes(filterText)) ||
+      (c.phone && c.phone.toLowerCase().includes(filterText)) ||
+      (c.email && c.email.toLowerCase().includes(filterText))
+    );
+  });
+
+  if (sortBy === 'value_desc') {
+    filtered.sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0));
+  } else if (sortBy === 'freq_desc') {
+    filtered.sort((a, b) => (b.totalPurchases || 0) - (a.totalPurchases || 0));
+  } else {
+    filtered.sort((a, b) => (b.lastVisit || '').localeCompare(a.lastVisit || ''));
+  }
+
+  const countEl = document.getElementById('customer-modal-count');
+  if (countEl) countEl.textContent = `${filtered.length} customer${filtered.length === 1 ? '' : 's'} found`;
+
   const body = document.getElementById('customer-table-body');
+  if (!body) return;
   
-  if (customers.length === 0) {
-    body.innerHTML = `<tr><td colspan="5"><div class="empty-state">
+  if (filtered.length === 0) {
+    body.innerHTML = `<tr><td colspan="7"><div class="empty-state">
       <div class="empty-icon">👥</div><div class="empty-text">No Customers Found</div>
       <div class="empty-sub">Customers added to bills will appear here</div>
     </div></td></tr>`;
   } else {
-    body.innerHTML = customers.map(c => {
+    body.innerHTML = filtered.map((c, idx) => {
       let waLink = '';
       if (c.phone && c.phone !== '-') {
         const waPhone = c.phone.replace(/[^\d+]/g, '');
@@ -1557,21 +1718,182 @@ function openCustomerModal() {
         }
       }
       return `<tr>
-        <td style="font-weight:600;">${esc(c.name)}</td>
+        <td style="text-align:center;color:var(--text-muted);">${idx + 1}</td>
+        <td style="font-weight:600;"><a href="javascript:void(0)" onclick="openCustomerProfileModal('${esc(c.phone)}', '${esc(c.name)}')" style="color:var(--accent-primary);text-decoration:none;">${esc(c.name)}</a></td>
         <td>${esc(c.phone)}</td>
         <td>${esc(c.email)}</td>
         <td>${formatDate(c.lastVisit)}</td>
-        <td>${waLink}</td>
+        <td style="text-align:right;font-weight:700;">${formatCurrency(c.totalSpent || 0)}</td>
+        <td style="text-align:center;">
+          <div style="display:flex;gap:6px;justify-content:center;align-items:center;">
+            ${waLink}
+            <button class="btn btn-outline btn-sm" onclick="openCustomerProfileModal('${esc(c.phone)}', '${esc(c.name)}')" style="padding:4px 8px;font-size:0.75rem;">👤 Profile</button>
+          </div>
+        </td>
       </tr>`;
     }).join('');
   }
-  
-  document.getElementById('customer-modal-count').textContent = `${customers.length} customer${customers.length === 1 ? '' : 's'} found`;
-  document.getElementById('customer-modal').classList.add('active');
 }
 
-function closeCustomerModal() {
-  document.getElementById('customer-modal').classList.remove('active');
+function openCustomerProfileModal(phone, name) {
+  const modal = document.getElementById('customer-profile-modal');
+  if (!modal) return;
+  const bills = getData(STORAGE_KEYS.bills);
+
+  const cleanPhone = (phone && phone !== '-') ? phone.trim() : '';
+  const matchBills = bills.filter(b => {
+    if (cleanPhone && b.phone) {
+      return b.phone.trim() === cleanPhone;
+    }
+    return b.customerName && b.customerName.trim().toLowerCase() === (name || '').trim().toLowerCase();
+  });
+
+  matchBills.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+  let totalSpent = 0;
+  const namesUsedSet = new Set();
+
+  matchBills.forEach(b => {
+    totalSpent += (parseFloat(b.grandTotal) || 0);
+    if (b.customerName && b.customerName !== 'Walk-in Customer') {
+      namesUsedSet.add(b.customerName);
+    }
+  });
+
+  const nameEl = document.getElementById('profile-name');
+  const phoneEl = document.getElementById('profile-phone');
+  const emailEl = document.getElementById('profile-email');
+  const spentEl = document.getElementById('profile-total-spent');
+  const purchasesEl = document.getElementById('profile-total-purchases');
+  const namesUsedEl = document.getElementById('profile-names-used');
+  const tbody = document.getElementById('profile-purchases-body');
+
+  if (nameEl) nameEl.textContent = name || (matchBills[0]?.customerName) || 'Customer Profile';
+  if (phoneEl) phoneEl.textContent = cleanPhone || (matchBills[0]?.phone) || '-';
+  if (emailEl) emailEl.textContent = (matchBills[0]?.email) || '-';
+  if (spentEl) spentEl.textContent = formatCurrency(totalSpent);
+  if (purchasesEl) purchasesEl.textContent = `${matchBills.length} Purchase${matchBills.length === 1 ? '' : 's'}`;
+  if (namesUsedEl) namesUsedEl.textContent = namesUsedSet.size > 0 ? Array.from(namesUsedSet).join(', ') : (name || '-');
+
+  if (tbody) {
+    if (matchBills.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:15px;color:var(--text-muted);">No purchases recorded for this customer</td></tr>`;
+    } else {
+      tbody.innerHTML = matchBills.map(b => `
+        <tr>
+          <td>${formatDate(b.date)}</td>
+          <td><strong>#KALP-${String(b.billNumber).padStart(4, '0')}</strong></td>
+          <td>${esc(b.customerName || 'Walk-in')}</td>
+          <td style="text-align:right;font-weight:700;">${formatCurrency(b.grandTotal || 0)}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  modal.classList.add('active');
+}
+
+function closeCustomerProfileModal() {
+  const modal = document.getElementById('customer-profile-modal');
+  if (modal) modal.classList.remove('active');
+}
+
+function openPendingDetailsModal() {
+  const modal = document.getElementById('pending-details-modal');
+  if (!modal) return;
+
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  let totalFabricPending = 0;
+  let totalTailorPending = 0;
+  const pendingOrders = [];
+
+  orders.forEach(order => {
+    const total = parseFloat(order.total) || 0;
+    const advance = parseFloat(order.advance) || 0;
+    const pending = parseFloat(order.pending) !== undefined ? parseFloat(order.pending) : (total - advance);
+    const fabric = parseFloat(order.fabric) || 0;
+    const tailor = parseFloat(order.tailor) || 0;
+
+    if (pending > 0.01) {
+      let fabricPending = 0;
+      let tailorPending = 0;
+      if (advance <= fabric) {
+        fabricPending = fabric - advance;
+        tailorPending = tailor;
+      } else {
+        fabricPending = 0;
+        tailorPending = Math.max(0, (fabric + tailor) - advance);
+      }
+      totalFabricPending += fabricPending;
+      totalTailorPending += tailorPending;
+      pendingOrders.push({
+        ...order,
+        total,
+        advance,
+        pending,
+        fabricPending,
+        tailorPending
+      });
+    }
+  });
+
+  const fabEl = document.getElementById('modal-fabric-pending');
+  const tailEl = document.getElementById('modal-tailor-pending');
+  if (fabEl) fabEl.textContent = formatCurrency(totalFabricPending);
+  if (tailEl) tailEl.textContent = formatCurrency(totalTailorPending);
+
+  const tbody = document.getElementById('pending-details-tbody');
+  if (tbody) {
+    if (pendingOrders.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted);">🎉 No pending payments! All orders settled.</td></tr>`;
+    } else {
+      tbody.innerHTML = pendingOrders.map(order => `
+        <tr>
+          <td><strong>#KALP-${String(order.billNumber || '').padStart(4, '0')}</strong></td>
+          <td>${esc(order.customerName || 'Walk-in')}</td>
+          <td style="text-align:right">${formatCurrency(order.total)}</td>
+          <td style="text-align:right;color:#15803d">${formatCurrency(order.advance)}</td>
+          <td style="text-align:right;color:#3b82f6;font-weight:600">${formatCurrency(order.fabricPending)}</td>
+          <td style="text-align:right;color:#f59e0b;font-weight:600">${formatCurrency(order.tailorPending)}</td>
+          <td style="text-align:center">
+            <button class="btn btn-sm btn-outline" onclick="settlePendingOrder('${order.id}', ${order.pending})" title="Quick Settle">✅ Settle</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  modal.classList.add('active');
+}
+
+function closePendingDetailsModal() {
+  const modal = document.getElementById('pending-details-modal');
+  if (modal) modal.classList.remove('active');
+}
+
+function settlePendingOrder(orderId, currentPending) {
+  if (!confirm(`Mark this order as fully settled (₹${(parseFloat(currentPending) || 0).toFixed(2)})?`)) return;
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  const order = orders.find(o => String(o.id) === String(orderId));
+  if (!order) return;
+
+  order.advance = order.total;
+  order.pending = 0;
+  setData(STORAGE_KEYS.orders, orders);
+
+  const bills = getData(STORAGE_KEYS.bills) || [];
+  const bill = bills.find(b => b.id === order.billId || String(b.billNumber) === String(order.billNumber));
+  if (bill) {
+    bill.advancePaid = (parseFloat(bill.grandTotal) || 0) + (parseFloat(bill.tailorAmount) || 0);
+    bill.totalPending = 0;
+    setData(STORAGE_KEYS.bills, bills);
+    saveSingleBillToCloud(bill);
+  }
+
+  showToast('Order marked as settled!', 'success');
+  if (typeof renderOrdersTable === 'function') renderOrdersTable();
+  refreshDashboard();
+  openPendingDetailsModal();
 }
 
 function exportCustomersCSV() {
@@ -1721,6 +2043,32 @@ function toggleDeliveryStatus(billId, isDelivered) {
 
 function closeDeliveriesModal() {
   document.getElementById('deliveries-modal').classList.remove('active');
+}
+
+async function syncDeliveriesToMS() {
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  const pending = orders.filter(o => o.deliveryDate && !o.isDelivered);
+  
+  if (pending.length === 0) {
+    showToast('No pending deliveries to sync', 'info');
+    return;
+  }
+
+  const lines = pending.map(o => {
+    return `• KALP Order #${o.billNumber} - ${o.customerName || 'Customer'} (Due: ${formatDate(o.deliveryDate)}, Pending: ₹${o.pending || 0})`;
+  });
+  const textToCopy = `KALP Pending Deliveries (${new Date().toLocaleDateString()}):\n` + lines.join('\n');
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(textToCopy);
+      showToast(`Synced ${pending.length} pending deliveries! Copied task list to clipboard for MS To Do.`, 'success');
+    } else {
+      showToast(`Found ${pending.length} pending deliveries to sync.`, 'success');
+    }
+  } catch (e) {
+    showToast(`Found ${pending.length} pending deliveries to sync.`, 'info');
+  }
 }
 
 // --- Recycle Bin Logic ---
@@ -2199,6 +2547,127 @@ function updateBillSummary() {
   if (totalInput && !isManualTotalOverride) {
     totalInput.value = grandTotal.toFixed(2);
   }
+  updatePendingAmount();
+}
+
+function updatePendingAmount() {
+  const totalInput = document.getElementById('bill-grand-total-input');
+  const grandTotal = totalInput ? (parseFloat(totalInput.value) || 0) : 0;
+  const noTailor = document.getElementById('bill-no-tailor')?.checked;
+  const tailorAmt = noTailor ? 0 : (parseFloat(document.getElementById('bill-tailor-amount')?.value) || 0);
+  const totalPayable = grandTotal + tailorAmt;
+
+  const advanceInput = document.getElementById('bill-advance-paid');
+  const advance = advanceInput ? (parseFloat(advanceInput.value) || 0) : 0;
+  const pending = Math.max(0, totalPayable - advance);
+
+  const pendingEl = document.getElementById('summary-pending');
+  if (pendingEl) {
+    pendingEl.textContent = formatCurrency(pending);
+  }
+}
+
+function toggleTailoringVisibility() {
+  const container = document.getElementById('tailoring-details-container');
+  const btn = document.getElementById('btn-toggle-tailoring');
+  if (!container) return;
+  const isHidden = container.style.display === 'none' || !container.style.display;
+  container.style.display = isHidden ? 'block' : 'none';
+  if (btn) {
+    btn.innerHTML = isHidden ? '🔼 Collapse Tailoring Options' : '✂️ Expand Tailoring Options';
+  }
+}
+
+function toggleTailoringSection(isNoTailor) {
+  const container = document.getElementById('tailoring-details-container');
+  const btn = document.getElementById('btn-toggle-tailoring');
+  const tailorAmtEl = document.getElementById('bill-tailor-amount');
+  if (isNoTailor) {
+    if (container) container.style.display = 'none';
+    if (btn) {
+      btn.style.display = 'none';
+      btn.innerHTML = '✂️ Expand Tailoring Options';
+    }
+    if (tailorAmtEl) {
+      tailorAmtEl.value = '0.00';
+      tailorAmtEl.disabled = true;
+    }
+  } else {
+    if (btn) btn.style.display = 'block';
+    if (tailorAmtEl) tailorAmtEl.disabled = false;
+    calculateTailorAmount();
+  }
+  updatePendingAmount();
+}
+
+function addStitchingItemRow(item = { name: '', qty: 1, rate: 0 }) {
+  const list = document.getElementById('stitching-items-list');
+  if (!list) return;
+  const rowId = 'stitch_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+  const row = document.createElement('div');
+  row.className = 'stitching-item-row';
+  row.id = rowId;
+  const initialTotal = ((parseFloat(item.qty) || 1) * (parseFloat(item.rate) || 0)).toFixed(2);
+  row.innerHTML = `
+    <input type="text" class="form-input input-sm stitching-name" placeholder="Garment (e.g. Kurta, Pant, Blouse)" value="${esc(item.name || '')}" oninput="calculateTailorAmount()">
+    <input type="number" class="form-input input-sm stitching-qty" placeholder="Qty" min="1" step="1" value="${item.qty || 1}" oninput="updateStitchingRowTotal('${rowId}')">
+    <input type="number" class="form-input input-sm stitching-rate" placeholder="Rate (₹)" min="0" step="1" value="${item.rate || ''}" oninput="updateStitchingRowTotal('${rowId}')">
+    <input type="text" class="form-input input-sm stitching-total" placeholder="0.00" readonly value="${initialTotal}">
+    <button type="button" class="btn btn-ghost btn-sm" onclick="removeStitchingItemRow('${rowId}')" title="Remove" style="padding:4px 8px;color:#ef4444;">✕</button>
+  `;
+  list.appendChild(row);
+  calculateTailorAmount();
+}
+
+function updateStitchingRowTotal(rowId) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const qty = parseFloat(row.querySelector('.stitching-qty').value) || 0;
+  const rate = parseFloat(row.querySelector('.stitching-rate').value) || 0;
+  row.querySelector('.stitching-total').value = (qty * rate).toFixed(2);
+  calculateTailorAmount();
+}
+
+function removeStitchingItemRow(rowId) {
+  const row = document.getElementById(rowId);
+  if (row) row.remove();
+  calculateTailorAmount();
+}
+
+function calculateTailorAmount() {
+  const noTailor = document.getElementById('bill-no-tailor')?.checked;
+  if (noTailor) {
+    const el = document.getElementById('bill-tailor-amount');
+    if (el) el.value = '0.00';
+    updatePendingAmount();
+    return;
+  }
+
+  let itemsSum = 0;
+  document.querySelectorAll('.stitching-item-row').forEach(row => {
+    const qty = parseFloat(row.querySelector('.stitching-qty').value) || 0;
+    const rate = parseFloat(row.querySelector('.stitching-rate').value) || 0;
+    itemsSum += (qty * rate);
+  });
+
+  const accessories = parseFloat(document.getElementById('tailor-accessories')?.value) || 0;
+  const handwork = parseFloat(document.getElementById('tailor-handwork')?.value) || 0;
+  const embroidery = parseFloat(document.getElementById('tailor-embroidery')?.value) || 0;
+  const discountPct = parseFloat(document.getElementById('tailor-discount')?.value) || 0;
+  const isPriority = document.getElementById('tailor-priority')?.checked || false;
+
+  let baseTotal = itemsSum + accessories + handwork + embroidery;
+  if (isPriority) {
+    baseTotal = baseTotal * 1.15;
+  }
+  const discountAmt = baseTotal * (discountPct / 100);
+  const finalTailor = Math.max(0, baseTotal - discountAmt);
+
+  const tailorAmountEl = document.getElementById('bill-tailor-amount');
+  if (tailorAmountEl) {
+    tailorAmountEl.value = finalTailor.toFixed(2);
+  }
+  updatePendingAmount();
 }
 
 function setGstMode(mode) {
@@ -2286,12 +2755,14 @@ function toggleGarmentQty(checkbox) {
   }
 }
 
-function saveAndPrintBill() {
+function saveAndPrintBill(printSide = 'both') {
   const customerName = document.getElementById('bill-customer-name').value.trim();
   const phone = document.getElementById('bill-phone').value.trim();
   const email = document.getElementById('bill-email').value.trim();
   const date = document.getElementById('bill-date').value;
   const paymentMethod = document.getElementById('bill-payment-method').value;
+  const orderNumber = document.getElementById('bill-order-number') ? document.getElementById('bill-order-number').value.trim() : '';
+  const advancePaid = parseFloat(document.getElementById('bill-advance-paid')?.value) || 0;
 
   const outfitInstructions = document.getElementById('bill-outfit-instructions') ? document.getElementById('bill-outfit-instructions').value.trim() : '';
   // Collect checked garments with optional quantities
@@ -2344,6 +2815,24 @@ function saveAndPrintBill() {
     return;
   }
 
+  // Collect Tailoring details
+  const tailoringItems = [];
+  document.querySelectorAll('.stitching-item-row').forEach(row => {
+    const name = row.querySelector('.stitching-name')?.value.trim() || '';
+    const qty = parseFloat(row.querySelector('.stitching-qty')?.value) || 1;
+    const rate = parseFloat(row.querySelector('.stitching-rate')?.value) || 0;
+    const total = parseFloat(row.querySelector('.stitching-total')?.value) || (qty * rate);
+    if (name || rate > 0) {
+      tailoringItems.push({ name, qty, rate, total });
+    }
+  });
+
+  const tailorAccessories = parseFloat(document.getElementById('tailor-accessories')?.value) || 0;
+  const tailorHandwork = parseFloat(document.getElementById('tailor-handwork')?.value) || 0;
+  const tailorEmbroidery = parseFloat(document.getElementById('tailor-embroidery')?.value) || 0;
+  const tailorDiscount = parseFloat(document.getElementById('tailor-discount')?.value) || 0;
+  const tailorPriority = document.getElementById('tailor-priority')?.checked || false;
+
   const validItems = lineItems.filter(i => i.itemName && i.qty && i.price);
   if (validItems.length === 0) {
     showToast('Please add at least one item with name, qty, and price', 'error');
@@ -2367,8 +2856,6 @@ function saveAndPrintBill() {
     grandTotal = subtotal + cgst + sgst;
   }
 
-  // Manual Override is now handled by literally changing the items.
-  // We just ensure grandTotal is set from the input value for consistency in syncing.
   const manualTotalField = document.getElementById('bill-grand-total-input');
   if (isManualTotalOverride && manualTotalField) {
     grandTotal = parseFloat(manualTotalField.value) || grandTotal;
@@ -2383,11 +2870,15 @@ function saveAndPrintBill() {
     splitCash = parseFloat(document.getElementById('split-cash').value) || 0;
     splitPhonepe = parseFloat(document.getElementById('split-phonepe').value) || 0;
     const splitTotal = splitCash + splitPhonepe;
-    if (Math.abs(splitTotal - grandTotal) > 0.05) { // Allow tiny floating point diff
+    if (Math.abs(splitTotal - grandTotal) > 0.05) {
        showToast(`Split amounts (₹${splitTotal}) do not match Grand Total (₹${grandTotal.toFixed(2)})`, 'error');
        return;
     }
   }
+
+  const tailorAmountNum = noTailor ? 0 : (parseFloat(tailorAmountInput) || 0);
+  const totalObligation = grandTotal + tailorAmountNum;
+  const totalPending = Math.max(0, totalObligation - advancePaid);
 
   const bills = getData(STORAGE_KEYS.bills);
 
@@ -2421,12 +2912,21 @@ function saveAndPrintBill() {
         ...oldBill,
         billNumber: finalBillNumber,
         date, gstMode, paymentMethod,
+        orderNumber,
+        advancePaid,
+        totalPending,
         splitCash, splitPhonepe,
         customerName: customerName || 'Walk-in Customer', phone, email,
         deliveryDate: noDelivery ? '' : deliveryDateInput,
         noDelivery: noDelivery,
         tailorAmount: noTailor ? '' : tailorAmountInput,
         noTailor: noTailor,
+        tailoringItems,
+        tailorAccessories,
+        tailorHandwork,
+        tailorEmbroidery,
+        tailorDiscount,
+        tailorPriority,
         outfitInstructions: outfitInstructions,
         outfitOptions: outfitOptions,
         outfitQuantities: outfitQuantities,
@@ -2462,7 +2962,6 @@ function saveAndPrintBill() {
 
       // Sync with Order Ledger
       const orders = getData(STORAGE_KEYS.orders);
-      // Robust lookup: try billId first, then billNumber fallback
       let orderIdx = orders.findIndex(o => o.billId === editingBillId);
       if (orderIdx === -1) {
         orderIdx = orders.findIndex(o => o.billNumber == oldBill.billNumber || o.billNumber == ("KALP-" + oldBill.billNumber));
@@ -2472,33 +2971,31 @@ function saveAndPrintBill() {
         orders[orderIdx].billId = bills[index].id; 
         orders[orderIdx].billNumber = bills[index].billNumber;
         orders[orderIdx].customerName = bills[index].customerName;
-        
-        // Sync Fabric directly from Bill, then recalculate Total/Pending
         orders[orderIdx].deliveryDate = noDelivery ? '' : deliveryDateInput;
-        orders[orderIdx].tailor = noTailor ? 0 : (parseFloat(tailorAmountInput) || 0);
+        orders[orderIdx].tailor = tailorAmountNum;
         orders[orderIdx].fabric = parseFloat(bills[index].grandTotal) || 0;
-        orders[orderIdx].total = orders[orderIdx].fabric + orders[orderIdx].tailor;
-        orders[orderIdx].pending = orders[orderIdx].total - (parseFloat(orders[orderIdx].advance) || 0);
+        orders[orderIdx].total = totalObligation;
+        orders[orderIdx].advance = advancePaid;
+        orders[orderIdx].pending = totalPending;
+        if (orderNumber) orders[orderIdx].orderNumber = orderNumber;
         
         setData(STORAGE_KEYS.orders, orders);
         if (typeof renderOrdersTable === 'function') renderOrdersTable();
       }
 
       showToast(`Bill #KALP-${String(oldBill.billNumber).padStart(4, '0')} updated!`, 'success');
-      printProfessionalBill(bills[index]);
-      resetBillForm(); // Clear edit state
+      printProfessionalBill(bills[index], printSide);
+      resetBillForm();
     }
   } else {
     // CREATE NEW BILL
     let finalBillNumber;
     if (manualBillNumber) {
       finalBillNumber = manualBillNumber;
-      // Check if bill number already exists
       if (bills.some(b => b.billNumber === finalBillNumber)) {
         showToast(`Bill #KALP-${String(finalBillNumber).padStart(4, '0')} already exists in your records! Please use a different number or delete the old bill first.`, 'error');
         return;
       }
-      // Update counter if the manual number is higher
       const currentCounter = getBillCounter();
       if (finalBillNumber > currentCounter) {
         localStorage.setItem(STORAGE_KEYS.billCounter, finalBillNumber.toString());
@@ -2509,12 +3006,21 @@ function saveAndPrintBill() {
 
     const bill = {
       id: Date.now(), billNumber: finalBillNumber, date, gstMode, paymentMethod,
+      orderNumber,
+      advancePaid,
+      totalPending,
       splitCash, splitPhonepe,
       customerName: customerName || 'Walk-in Customer', phone, email,
       deliveryDate: noDelivery ? '' : deliveryDateInput,
       noDelivery: noDelivery,
       tailorAmount: noTailor ? '' : tailorAmountInput,
       noTailor: noTailor,
+      tailoringItems,
+      tailorAccessories,
+      tailorHandwork,
+      tailorEmbroidery,
+      tailorDiscount,
+      tailorPriority,
       outfitInstructions: outfitInstructions,
       outfitOptions: outfitOptions,
       outfitQuantities: outfitQuantities,
@@ -2548,48 +3054,43 @@ function saveAndPrintBill() {
       id: Date.now() + Math.random(),
       billId: bill.id,
       billNumber: bill.billNumber,
+      orderNumber: orderNumber || '',
       customerName: bill.customerName,
-      fabric: bill.grandTotal, // Start with bill total in fabric
-      tailor: noTailor ? 0 : (parseFloat(tailorAmountInput) || 0),
+      fabric: bill.grandTotal,
+      tailor: tailorAmountNum,
       deliveryDate: noDelivery ? '' : deliveryDateInput,
-      advance: 0,
-      total: bill.grandTotal + (noTailor ? 0 : (parseFloat(tailorAmountInput) || 0)),
-      pending: bill.grandTotal + (noTailor ? 0 : (parseFloat(tailorAmountInput) || 0))
+      advance: advancePaid,
+      total: totalObligation,
+      pending: totalPending
     });
     setData(STORAGE_KEYS.orders, orders);
     if (typeof renderOrdersTable === 'function') renderOrdersTable();
 
     showToast(`Bill #KALP-${String(finalBillNumber).padStart(4, '0')} saved!`, 'success');
-    printProfessionalBill(bill);
-    resetBillForm(); // Move to next bill automatically
+    printProfessionalBill(bill, printSide);
+    resetBillForm();
   }
 }
 
-function printProfessionalBill(bill) {
-  const shop = getShopDetails();
+function renderFrontBillPageHTML(bill, shop) {
   const dateStr = formatDate(bill.date);
   const billNo = String(bill.billNumber);
-
-  // Shop info with fallbacks
   const shopName = shop.name || 'KALP';
   const addrStr = shop.address ? esc(shop.address).replace(/\n/g, '<br>') : '';
   const gstinStr = shop.gstin ? esc(shop.gstin) : '';
   const shopPhone = shop.phone ? esc(shop.phone) : '';
   const shopEmail = shop.email ? esc(shop.email) : '';
 
-  // Logo
   let logoHTML = '';
   const currentLogo = (shop.logo !== 'none' && shop.logo !== false) ? (shop.logo || 'image.png') : '';
   if (currentLogo) {
     logoHTML = `<img src="${currentLogo}" style="max-height:48px;max-width:110px;margin-bottom:3px;border-radius:4px;object-fit:contain;">`;
   }
 
-  // Calculations
   const totalQty = bill.items.reduce((s, i) => s + i.qty, 0);
   const roundedGrand = Math.round(bill.grandTotal);
   const roundOff = roundedGrand - bill.grandTotal;
 
-  // Item rows (no advance/pending)
   const itemRows = bill.items.map((item, i) => {
     return `<tr>
       <td class="bc br ta-c">${i + 1}</td>
@@ -2600,35 +3101,8 @@ function printProfessionalBill(bill) {
     </tr>`;
   }).join('');
 
-  const printArea = document.getElementById('bill-professional-print');
-  printArea.innerHTML = `
-    <style>
-      /* Absolute Center Watermark Fix - Timestamp: ${Date.now()} */
-      .kb { position: relative; font-family: Arial, Helvetica, sans-serif; color: #000; font-size: 11px; line-height: 1.35; max-width: 680px; margin: 0 auto; border: 2px solid #000; background: transparent; z-index: 2; margin-top: 10px; min-height: 200px; }
-      .kb .bc { padding: 3px 5px; border-bottom: 1px solid #ccc; }
-      .kb .br { border-right: 1px solid #ccc; }
-      .kb .ta-r { text-align: right; }
-      .kb .ta-c { text-align: center; }
-      .kb table { width: 100%; border-collapse: collapse; }
-      .bill-professional-watermark {
-        position: absolute; 
-        top: 100mm; /* Precisely centers on A5 page */
-        left: 50%;
-        transform: translate(-50%, -50%) rotate(-30deg);
-        font-size: 115px;
-        font-weight: 900;
-        color: #000 !important;
-        opacity: 0.08; /* Transparent overlay */
-        z-index: 9999; /* Guarantees no backgrounds can hide it */
-        pointer-events: none;
-        white-space: nowrap;
-        text-transform: uppercase;
-        letter-spacing: 12px;
-      }
-    </style>
-    
-    <div class="kb">
-      <!-- Overlay Watermark -->
+  return `
+    <div class="kb print-front-page">
       <div class="bill-professional-watermark">KALP</div>
       
       <!-- Header Content -->
@@ -2659,6 +3133,7 @@ function printProfessionalBill(bill) {
         </div>
         <div style="width:160px;padding:5px 8px;font-size:11px;">
           <div><span style="color:#555;">Bill No:</span> <strong>${billNo}</strong></div>
+          ${bill.orderNumber ? `<div style="margin-top:2px;"><span style="color:#555;">Order No:</span> <strong>${esc(bill.orderNumber)}</strong></div>` : ''}
           <div style="margin-top:2px;"><span style="color:#555;">Date:</span> <strong>${dateStr}</strong></div>
           ${bill.noDelivery || !bill.deliveryDate ? '' : `<div style="margin-top:2px;"><span style="color:#555;">Delivery:</span> <strong>${formatDate(bill.deliveryDate)}</strong></div>`}
         </div>
@@ -2693,7 +3168,7 @@ function printProfessionalBill(bill) {
       <div style="padding:5px 8px;border-top:2px solid #000;font-size:10px;">
         <div style="font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;">Outfit Details & Instructions</div>
         ${bill.outfitOptions && bill.outfitOptions.length > 0 ? `<div style="margin-bottom:2px;"><strong>Garments:</strong> ${bill.outfitOptions.map(g => { const q = (bill.outfitQuantities && bill.outfitQuantities[g]) || 1; return q > 1 ? `${g} x${q}` : g; }).join(', ')}</div>` : ''}
-        ${bill.outfitInstructions ? `<div><strong>Instructions:</strong> ${esc(bill.outfitInstructions).replace(/\\n/g, '<br>')}</div>` : ''}
+        ${bill.outfitInstructions ? `<div><strong>Instructions:</strong> ${esc(bill.outfitInstructions).replace(/\n/g, '<br>')}</div>` : ''}
       </div>` : ''}
 
       <!-- Tax + Payment Summary side by side -->
@@ -2763,6 +3238,25 @@ function printProfessionalBill(bill) {
               <td style="padding:6px 6px;">GRAND TOTAL</td>
               <td style="padding:6px 6px;text-align:right;">₹${roundedGrand.toFixed(2)}</td>
             </tr>
+            ${(parseFloat(bill.tailorAmount) > 0) ? `
+            <tr style="border-top:1px solid #eee; font-size:10px;">
+              <td style="padding:2px 6px;">Tailoring Charges</td>
+              <td style="padding:2px 6px;text-align:right;">₹${(parseFloat(bill.tailorAmount) || 0).toFixed(2)}</td>
+            </tr>
+            <tr style="border-top:1px solid #eee; font-size:10px; font-weight:600;">
+              <td style="padding:2px 6px;">Total Obligation</td>
+              <td style="padding:2px 6px;text-align:right;">₹${(roundedGrand + (parseFloat(bill.tailorAmount) || 0)).toFixed(2)}</td>
+            </tr>` : ''}
+            ${(bill.advancePaid > 0) ? `
+            <tr style="border-top:1px solid #eee; font-size:10px; color:#15803d; font-weight:600;">
+              <td style="padding:2px 6px;">Advance Paid</td>
+              <td style="padding:2px 6px;text-align:right;">₹${parseFloat(bill.advancePaid).toFixed(2)}</td>
+            </tr>` : ''}
+            ${(bill.totalPending > 0) ? `
+            <tr style="border-top:1px solid #eee; font-size:10px; color:#b91c1c; font-weight:700;">
+              <td style="padding:2px 6px;">Balance Due</td>
+              <td style="padding:2px 6px;text-align:right;">₹${parseFloat(bill.totalPending).toFixed(2)}</td>
+            </tr>` : ''}
             <tr style="border-top:1px solid #000;">
               <td style="padding:3px 6px;font-size:10px;color:#555;">Payment Mode</td>
               <td style="padding:3px 6px;text-align:right;font-weight:700;">
@@ -2792,7 +3286,201 @@ function printProfessionalBill(bill) {
       </div>
     </div>
   `;
+}
 
+function renderBackBillPageHTML(bill, shop) {
+  const shopName = shop.name || 'KALP';
+  const billNo = String(bill.billNumber);
+  const dateStr = formatDate(bill.date);
+  const deliveryStr = bill.deliveryDate ? formatDate(bill.deliveryDate) : 'Not specified';
+  const orderNo = bill.orderNumber || `KALP-${billNo}`;
+  const tailorItems = Array.isArray(bill.tailoringItems) && bill.tailoringItems.length > 0
+    ? bill.tailoringItems
+    : [];
+
+  const tailorRows = tailorItems.length > 0 ? tailorItems.map((item, idx) => `
+    <tr>
+      <td class="bc br ta-c">${idx + 1}</td>
+      <td class="bc br" style="text-align:left;font-weight:500;">${esc(item.name || 'Custom Stitching')}</td>
+      <td class="bc br ta-r">${item.qty || 1}</td>
+      <td class="bc br ta-r">${(parseFloat(item.rate) || 0).toFixed(2)}</td>
+      <td class="bc ta-r" style="font-weight:600;">${(parseFloat(item.total) || 0).toFixed(2)}</td>
+    </tr>
+  `).join('') : `
+    <tr>
+      <td class="bc br ta-c">1</td>
+      <td class="bc br" style="text-align:left;">Tailoring / Alteration Services</td>
+      <td class="bc br ta-r">1</td>
+      <td class="bc br ta-r">${(parseFloat(bill.tailorAmount) || 0).toFixed(2)}</td>
+      <td class="bc ta-r" style="font-weight:600;">${(parseFloat(bill.tailorAmount) || 0).toFixed(2)}</td>
+    </tr>
+  `;
+
+  const garmentsList = (bill.outfitOptions && bill.outfitOptions.length > 0)
+    ? bill.outfitOptions.map(g => {
+        const q = (bill.outfitQuantities && bill.outfitQuantities[g]) || 1;
+        return q > 1 ? `${g} (x${q})` : g;
+      }).join(', ')
+    : 'None specified';
+
+  return `
+    <div class="kb print-back-page">
+      <div class="bill-professional-watermark">KALP</div>
+      
+      <!-- Header -->
+      <div style="text-align:center;padding:8px 10px 6px;border-bottom:2px solid #000;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:9px;font-weight:bold;text-decoration:underline;width:80px;text-align:left;">WORK ORDER</div>
+          <div style="text-align:center;flex:1;">
+            <div style="font-size:18px;font-weight:900;letter-spacing:2px;">${esc(shopName)} - TAILORING SLIP</div>
+            <div style="font-size:10px;margin-top:1px;">Production Job Card &amp; Measurement Record</div>
+          </div>
+          <div style="width:80px;text-align:right;font-size:9px;font-weight:bold;">SIDE 2 (BACK)</div>
+        </div>
+      </div>
+
+      <!-- Customer & Job Info -->
+      <div style="display:flex;border-bottom:2px solid #000;">
+        <div style="flex:1;padding:5px 8px;border-right:1px solid #000;font-size:11px;">
+          <div><span style="color:#555;">Customer:</span> <strong>${esc(bill.customerName)}</strong></div>
+          ${bill.phone ? `<div style="margin-top:2px;"><span style="color:#555;">Phone:</span> <strong>${esc(bill.phone)}</strong></div>` : ''}
+          ${bill.staffName ? `<div style="margin-top:2px;"><span style="color:#555;">Stylist/Staff:</span> <strong>${esc(bill.staffName)}</strong></div>` : ''}
+        </div>
+        <div style="width:200px;padding:5px 8px;font-size:11px;">
+          <div><span style="color:#555;">Bill No:</span> <strong>#KALP-${String(billNo).padStart(4, '0')}</strong></div>
+          <div><span style="color:#555;">Order / Job No:</span> <strong>${esc(orderNo)}</strong></div>
+          <div><span style="color:#555;">Order Date:</span> <strong>${dateStr}</strong></div>
+          <div style="margin-top:2px;color:#b91c1c;font-weight:700;"><span style="color:#555;">Delivery Due:</span> ${deliveryStr}</div>
+        </div>
+      </div>
+
+      <!-- Selected Garments -->
+      <div style="padding:6px 8px;border-bottom:1px solid #000;background:#f9f9f9;font-size:11px;">
+        <strong>Garments for Tailoring:</strong> ${garmentsList}
+      </div>
+
+      <!-- Tailoring Items Table -->
+      <table>
+        <thead>
+          <tr style="background:#f5f5f5;border-bottom:2px solid #000;">
+            <th class="bc br" style="width:6%;text-align:center;">SN</th>
+            <th class="bc br" style="width:46%;text-align:left;">TAILORING / WORK DESCRIPTION</th>
+            <th class="bc br" style="width:12%;text-align:right;">Qty</th>
+            <th class="bc br" style="width:16%;text-align:right;">Rate (₹)</th>
+            <th class="bc" style="width:20%;text-align:right;">Total (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tailorRows}
+        </tbody>
+      </table>
+
+      <!-- Tailoring Addons & Breakdown -->
+      <div style="display:flex;border-top:2px solid #000;">
+        <div style="flex:1;border-right:2px solid #000;padding:6px 8px;font-size:10px;">
+          <div style="font-weight:700;text-transform:uppercase;margin-bottom:4px;letter-spacing:0.5px;">Outfit Instructions &amp; Measurements:</div>
+          <div style="min-height:55px;font-size:10px;line-height:1.4;white-space:pre-wrap;">${bill.outfitInstructions ? esc(bill.outfitInstructions) : 'As per standard store measurements and trial.'}</div>
+          <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;">
+            <div>Accessories: ₹${(parseFloat(bill.tailorAccessories) || 0).toFixed(2)}</div>
+            <div>Handwork: ₹${(parseFloat(bill.tailorHandwork) || 0).toFixed(2)}</div>
+            <div>Embroidery: ₹${(parseFloat(bill.tailorEmbroidery) || 0).toFixed(2)}</div>
+            ${bill.tailorPriority ? '<div style="color:#b91c1c;font-weight:700;">⚡ Priority Express (+15%)</div>' : ''}
+          </div>
+        </div>
+        <div style="width:240px;padding:0;">
+          <table style="font-size:11px;">
+            <tr>
+              <td style="padding:3px 6px;">Fabric Bill Amount</td>
+              <td style="padding:3px 6px;text-align:right;">₹${(parseFloat(bill.grandTotal) || 0).toFixed(2)}</td>
+            </tr>
+            <tr style="border-top:1px solid #eee;">
+              <td style="padding:3px 6px;">Total Tailoring</td>
+              <td style="padding:3px 6px;text-align:right;">₹${(parseFloat(bill.tailorAmount) || 0).toFixed(2)}</td>
+            </tr>
+            <tr style="border-top:1px solid #000;font-weight:700;background:#f5f5f5;">
+              <td style="padding:3px 6px;">Total Obligation</td>
+              <td style="padding:3px 6px;text-align:right;">₹${((parseFloat(bill.grandTotal) || 0) + (parseFloat(bill.tailorAmount) || 0)).toFixed(2)}</td>
+            </tr>
+            <tr style="border-top:1px solid #eee;color:#15803d;font-weight:600;">
+              <td style="padding:3px 6px;">Advance Received</td>
+              <td style="padding:3px 6px;text-align:right;">-₹${(parseFloat(bill.advancePaid) || 0).toFixed(2)}</td>
+            </tr>
+            <tr style="border-top:2px solid #000;background:#000;color:#fff;font-size:13px;font-weight:900;">
+              <td style="padding:5px 6px;">BALANCE DUE</td>
+              <td style="padding:5px 6px;text-align:right;">₹${(parseFloat(bill.totalPending) || 0).toFixed(2)}</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Signatures -->
+      <div style="display:flex;border-top:2px solid #000;padding:12px 10px 8px;">
+        <div style="flex:1;font-size:10px;">
+          <div style="margin-top:25px;border-top:1px solid #000;width:70%;padding-top:2px;">Customer Signature &amp; Acceptance</div>
+        </div>
+        <div style="flex:1;text-align:center;font-size:10px;">
+          <div style="margin-top:25px;border-top:1px solid #000;width:70%;margin-left:auto;margin-right:auto;padding-top:2px;">Master Tailor Check</div>
+        </div>
+        <div style="width:180px;text-align:right;font-size:10px;">
+          <div style="margin-top:25px;border-top:1px solid #000;padding-top:2px;">Store Authorised Signatory</div>
+        </div>
+      </div>
+
+      <div style="text-align:center;border-top:1px solid #000;padding:3px;font-size:9px;font-weight:600;background:#f9f9f9;">
+        Please bring this work order slip at the time of trial &amp; delivery.
+      </div>
+    </div>
+  `;
+}
+
+function printProfessionalBill(bill, printSide = 'both') {
+  const shop = getShopDetails();
+  const printArea = document.getElementById('bill-professional-print');
+  if (!printArea) return;
+
+  const styleTag = `
+    <style>
+      .kb { position: relative; font-family: Arial, Helvetica, sans-serif; color: #000; font-size: 11px; line-height: 1.35; max-width: 680px; margin: 0 auto; border: 2px solid #000; background: transparent; z-index: 2; margin-top: 10px; min-height: 200px; }
+      .kb .bc { padding: 3px 5px; border-bottom: 1px solid #ccc; }
+      .kb .br { border-right: 1px solid #ccc; }
+      .kb .ta-r { text-align: right; }
+      .kb .ta-c { text-align: center; }
+      .kb table { width: 100%; border-collapse: collapse; }
+      .bill-professional-watermark {
+        position: absolute; 
+        top: 100mm;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-30deg);
+        font-size: 115px;
+        font-weight: 900;
+        color: #000 !important;
+        opacity: 0.08;
+        z-index: 9999;
+        pointer-events: none;
+        white-space: nowrap;
+        text-transform: uppercase;
+        letter-spacing: 12px;
+      }
+      .print-page-break {
+        page-break-after: always;
+        break-after: page;
+        height: 0;
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+  `;
+
+  let contentHTML = '';
+  if (printSide === 1 || printSide === 'front') {
+    contentHTML = styleTag + renderFrontBillPageHTML(bill, shop);
+  } else if (printSide === 2 || printSide === 'back') {
+    contentHTML = styleTag + renderBackBillPageHTML(bill, shop);
+  } else {
+    contentHTML = styleTag + renderFrontBillPageHTML(bill, shop) + '<div class="print-page-break"></div>' + renderBackBillPageHTML(bill, shop);
+  }
+
+  printArea.innerHTML = contentHTML;
   document.body.classList.add('printing-bill');
 
   const images = printArea.querySelectorAll('img');
@@ -2831,6 +3519,8 @@ function resetBillForm() {
   document.getElementById('bill-email').value = '';
   document.getElementById('bill-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('bill-number').value = `KALP-${String(getBillCounter() + 1).padStart(4, '0')}`;
+  if (document.getElementById('bill-order-number')) document.getElementById('bill-order-number').value = '';
+  if (document.getElementById('bill-advance-paid')) document.getElementById('bill-advance-paid').value = '';
   document.getElementById('bill-discount-percent').value = '';
   document.getElementById('bill-payment-method').value = '';
   document.querySelectorAll('#payment-method-toggle button').forEach(btn => btn.classList.remove('active'));
@@ -2852,9 +3542,25 @@ function resetBillForm() {
     tailorAmountEl.value = '';
   }
 
+  // Clear Stitching Items and Tailoring Addons
+  const stitchingList = document.getElementById('stitching-items-list');
+  if (stitchingList) stitchingList.innerHTML = '';
+  if (document.getElementById('tailor-accessories')) document.getElementById('tailor-accessories').value = '';
+  if (document.getElementById('tailor-handwork')) document.getElementById('tailor-handwork').value = '';
+  if (document.getElementById('tailor-embroidery')) document.getElementById('tailor-embroidery').value = '';
+  if (document.getElementById('tailor-discount')) document.getElementById('tailor-discount').value = '';
+  if (document.getElementById('tailor-priority')) document.getElementById('tailor-priority').checked = false;
+
+  const tailoringContainer = document.getElementById('tailoring-details-container');
+  if (tailoringContainer) tailoringContainer.style.display = 'none';
+  const toggleTailorBtn = document.getElementById('btn-toggle-tailoring');
+  if (toggleTailorBtn) {
+    toggleTailorBtn.innerHTML = '✂️ Expand Tailoring Options';
+    toggleTailorBtn.style.display = 'block';
+  }
+
   const instructionsEl = document.getElementById('bill-outfit-instructions');
   if (instructionsEl) instructionsEl.value = '';
-  // Reset all garment checkboxes and qty inputs
   document.querySelectorAll('.outfit-checkbox').forEach(cb => {
     cb.checked = false;
     const row = cb.closest('.outfit-item-row');
@@ -2862,7 +3568,6 @@ function resetBillForm() {
     if (qtyInput) { qtyInput.style.display = 'none'; qtyInput.value = ''; }
   });
 
-  // Clear staff, event date, fabric cut
   const staffSel = document.getElementById('bill-staff-id');
   if (staffSel) staffSel.value = '';
   const evDateEl = document.getElementById('bill-event-date');
@@ -2876,10 +3581,11 @@ function resetBillForm() {
 
   const saveBtn = document.getElementById('btn-save-print-bill');
   if (saveBtn) {
-    saveBtn.innerHTML = '💾 Save & Print 🖨️';
+    saveBtn.innerHTML = '💾 Save &amp; Print All';
     saveBtn.classList.replace('btn-secondary', 'btn-primary');
   }
 
+  updatePendingAmount();
   showToast('Form cleared', 'success');
 }
 
@@ -3066,6 +3772,8 @@ let lastGeneratedBarcode = null;
 
 function generateBarcode() {
   const name = document.getElementById('barcode-item-name').value.trim();
+  const supplierName = document.getElementById('barcode-supplier-name') ? document.getElementById('barcode-supplier-name').value.trim() : '';
+  const fabricCode = document.getElementById('barcode-fabric-code') ? document.getElementById('barcode-fabric-code').value.trim() : '';
   const price = parseFloat(document.getElementById('barcode-item-price').value) || 0;
   const stock = parseFloat(document.getElementById('barcode-item-stock').value) || 0;
   let barcodeValue = document.getElementById('barcode-custom-value').value.trim();
@@ -3110,6 +3818,8 @@ function generateBarcode() {
 
   details.innerHTML = `
     <div class="item-detail"><span class="label">Item</span><span class="value">${esc(name)}</span></div>
+    ${supplierName ? `<div class="item-detail"><span class="label">Supplier</span><span class="value">${esc(supplierName)}</span></div>` : ''}
+    ${fabricCode ? `<div class="item-detail"><span class="label">Fabric Code</span><span class="value">${esc(fabricCode)}</span></div>` : ''}
     <div class="item-detail"><span class="label">Price</span><span class="value">${formatCurrency(price)}</span></div>
     <div class="item-detail"><span class="label">Stock</span><span class="value">${fmtQty(stock)} Mts</span></div>
     <div class="item-detail"><span class="label">Barcode</span><span class="value">${esc(barcodeValue)}</span></div>
@@ -3118,7 +3828,7 @@ function generateBarcode() {
   previewCard.style.display = 'block';
 
   lastGeneratedBarcode = {
-    name, price, stock, barcodeValue
+    name, price, stock, barcodeValue, supplierName, fabricCode
   };
 
   showToast('Barcode generated! Save it or print it.', 'success');
@@ -3130,12 +3840,14 @@ function saveBarcodeItem() {
     return;
   }
 
-  const { name, price, stock, barcodeValue } = lastGeneratedBarcode;
+  const { name, price, stock, barcodeValue, supplierName, fabricCode } = lastGeneratedBarcode;
 
   const barcodes = getData(STORAGE_KEYS.barcodes);
   const newItem = {
     id: Date.now().toString(),
     name, price, stock, barcodeValue,
+    supplierName: supplierName || '',
+    fabricCode: fabricCode || '',
     createdAt: new Date().toISOString()
   };
   barcodes.push(newItem);
@@ -3162,6 +3874,8 @@ function saveBarcodeItem() {
   showToast(`"${name}" saved with barcode ${barcodeValue}`, 'success');
 
   // Clear form - Name and Margin are preserved as per user request
+  if (document.getElementById('barcode-supplier-name')) document.getElementById('barcode-supplier-name').value = '';
+  if (document.getElementById('barcode-fabric-code')) document.getElementById('barcode-fabric-code').value = '';
   document.getElementById('barcode-cost-price').value = '';
   document.getElementById('barcode-item-price').value = '';
   document.getElementById('barcode-item-stock').value = '';
@@ -3273,7 +3987,10 @@ function renderBarcodeList(filter = '') {
   if (filter) {
     const lf = filter.toLowerCase();
     filtered = barcodes.filter(b =>
-      b.name.toLowerCase().includes(lf) || b.barcodeValue.toLowerCase().includes(lf)
+      b.name.toLowerCase().includes(lf) ||
+      b.barcodeValue.toLowerCase().includes(lf) ||
+      (b.supplierName || '').toLowerCase().includes(lf) ||
+      (b.fabricCode || '').toLowerCase().includes(lf)
     );
   }
 
@@ -3294,6 +4011,10 @@ function renderBarcodeList(filter = '') {
                oninput="updateBarcodeName('${item.id}', this.value)" 
                placeholder="Item Name">
       </div>
+      ${(item.supplierName || item.fabricCode) ? `
+      <div style="font-size: 11px; color: var(--text-muted); margin: 2px 0;">
+        ${item.supplierName ? esc(item.supplierName) : ''}${item.supplierName && item.fabricCode ? ' • ' : ''}${item.fabricCode ? `Code: ${esc(item.fabricCode)}` : ''}
+      </div>` : ''}
       <div class="barcode-card-price">${formatCurrency(item.price)}</div>
       <div class="barcode-card-stock">Stock: ${fmtQty(item.stock)} Mts</div>
       <div class="barcode-card-actions">
@@ -4034,6 +4755,232 @@ function deleteOrder(id) {
   showToast('Order entry deleted', 'warning');
 }
 
+function consolidateLedger() {
+  const bills = getData(STORAGE_KEYS.bills) || [];
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  let consolidatedCount = 0;
+  let addedCount = 0;
+
+  bills.forEach(bill => {
+    let orderIdx = orders.findIndex(o => o.billId === bill.id);
+    if (orderIdx === -1) {
+      orderIdx = orders.findIndex(o => String(o.billNumber) == String(bill.billNumber) || String(o.billNumber) == ('KALP-' + bill.billNumber));
+    }
+
+    const fabric = parseFloat(bill.grandTotal) || 0;
+    const tailor = parseFloat(bill.tailorAmount) || 0;
+    const total = parseFloat((fabric + tailor).toFixed(2));
+    const advance = parseFloat(bill.advancePaid) || 0;
+    const pending = Math.max(0, parseFloat((total - advance).toFixed(2)));
+
+    if (orderIdx !== -1) {
+      orders[orderIdx].billId = bill.id;
+      orders[orderIdx].billNumber = bill.billNumber;
+      if (!orders[orderIdx].customerName || orders[orderIdx].customerName === 'Walk-in') {
+        orders[orderIdx].customerName = bill.customerName;
+      }
+      if (!orders[orderIdx].deliveryDate && bill.deliveryDate) {
+        orders[orderIdx].deliveryDate = bill.deliveryDate;
+      }
+      orders[orderIdx].fabric = fabric;
+      if (orders[orderIdx].tailor === undefined || orders[orderIdx].tailor === null || orders[orderIdx].tailor === 0) {
+        orders[orderIdx].tailor = tailor;
+      }
+      orders[orderIdx].total = parseFloat(((parseFloat(orders[orderIdx].fabric) || 0) + (parseFloat(orders[orderIdx].tailor) || 0)).toFixed(2));
+      if (orders[orderIdx].advance === undefined || orders[orderIdx].advance === null) {
+        orders[orderIdx].advance = advance;
+      }
+      orders[orderIdx].pending = parseFloat(((orders[orderIdx].total || 0) - (parseFloat(orders[orderIdx].advance) || 0)).toFixed(2));
+      if (bill.orderNumber) orders[orderIdx].orderNumber = bill.orderNumber;
+      consolidatedCount++;
+    } else {
+      orders.push({
+        id: Date.now() + Math.random(),
+        billId: bill.id,
+        billNumber: bill.billNumber,
+        orderNumber: bill.orderNumber || '',
+        customerName: bill.customerName,
+        deliveryDate: bill.noDelivery ? '' : (bill.deliveryDate || ''),
+        fabric: fabric,
+        tailor: tailor,
+        advance: advance,
+        total: total,
+        pending: pending
+      });
+      addedCount++;
+    }
+  });
+
+  setData(STORAGE_KEYS.orders, orders);
+  renderOrdersTable();
+  refreshDashboard();
+  showToast(`Ledger consolidated! Reconciled ${consolidatedCount} orders${addedCount > 0 ? `, recovered ${addedCount} missing orders` : ''}.`, 'success');
+}
+
+// ===================================================================
+// CONSIGNMENTS
+// ===================================================================
+function renderConsignments() {
+  const consignments = getData(STORAGE_KEYS.consignments) || [];
+  const tbody = document.getElementById('consignment-body');
+  if (!tbody) return;
+
+  if (consignments.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8">
+      <div class="empty-state">
+        <div class="empty-icon">🚚</div>
+        <div class="empty-text">No consignments found</div>
+        <div class="empty-sub">Add a new incoming order to track it here</div>
+      </div>
+    </td></tr>`;
+    return;
+  }
+
+  const sorted = [...consignments].sort((a, b) => new Date(b.orderDate || 0) - new Date(a.orderDate || 0));
+
+  tbody.innerHTML = sorted.map(c => `
+    <tr>
+      <td style="font-weight:600;">${esc(c.partyName || '-')}</td>
+      <td>${c.orderDate ? formatDate(c.orderDate) : '-'}</td>
+      <td>${c.expectedDelivery ? formatDate(c.expectedDelivery) : '-'}</td>
+      <td>${esc(c.description || '-')}</td>
+      <td style="text-align:center;">
+        <input type="checkbox" ${c.lrReceived ? 'checked' : ''} onchange="toggleConsignmentStatus('${c.id}', 'lrReceived', this.checked)" style="cursor:pointer;width:18px;height:18px;">
+      </td>
+      <td style="text-align:center;">
+        <input type="checkbox" ${c.delivered ? 'checked' : ''} onchange="toggleConsignmentStatus('${c.id}', 'delivered', this.checked)" style="cursor:pointer;width:18px;height:18px;">
+      </td>
+      <td style="text-align:center;">
+        <input type="checkbox" ${c.payment ? 'checked' : ''} onchange="toggleConsignmentStatus('${c.id}', 'payment', this.checked)" style="cursor:pointer;width:18px;height:18px;">
+      </td>
+      <td style="text-align:center;">
+        <button class="btn-icon btn-edit" onclick="openConsignmentModal('${c.id}')" title="Edit">📝</button>
+        <button class="btn-icon btn-delete" onclick="deleteConsignment('${c.id}')" title="Delete">🗑️</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openConsignmentModal(id = null) {
+  const modal = document.getElementById('consignment-modal');
+  if (!modal) return;
+  const title = document.getElementById('consignment-modal-title');
+  const idInput = document.getElementById('consignment-id');
+  const partyInput = document.getElementById('consignment-party');
+  const orderDateInput = document.getElementById('consignment-order-date');
+  const delDateInput = document.getElementById('consignment-delivery-date');
+  const descInput = document.getElementById('consignment-desc');
+  const lrCb = document.getElementById('consignment-lr');
+  const deliveredCb = document.getElementById('consignment-delivered');
+  const paymentCb = document.getElementById('consignment-payment');
+
+  if (id) {
+    const list = getData(STORAGE_KEYS.consignments) || [];
+    const item = list.find(c => String(c.id) === String(id));
+    if (item) {
+      if (title) title.textContent = 'Edit Consignment';
+      idInput.value = item.id;
+      partyInput.value = item.partyName || '';
+      orderDateInput.value = item.orderDate || '';
+      delDateInput.value = item.expectedDelivery || '';
+      descInput.value = item.description || '';
+      lrCb.checked = !!item.lrReceived;
+      deliveredCb.checked = !!item.delivered;
+      paymentCb.checked = !!item.payment;
+      modal.classList.add('active');
+      return;
+    }
+  }
+
+  if (title) title.textContent = 'Add Consignment';
+  idInput.value = '';
+  partyInput.value = '';
+  orderDateInput.value = new Date().toISOString().split('T')[0];
+  delDateInput.value = '';
+  descInput.value = '';
+  lrCb.checked = false;
+  deliveredCb.checked = false;
+  paymentCb.checked = false;
+
+  modal.classList.add('active');
+}
+
+function closeConsignmentModal() {
+  const modal = document.getElementById('consignment-modal');
+  if (modal) modal.classList.remove('active');
+}
+
+function saveConsignment() {
+  const party = document.getElementById('consignment-party').value.trim();
+  if (!party) {
+    showToast('Please enter Party Name', 'error');
+    return;
+  }
+  const id = document.getElementById('consignment-id').value;
+  const orderDate = document.getElementById('consignment-order-date').value;
+  const expectedDelivery = document.getElementById('consignment-delivery-date').value;
+  const description = document.getElementById('consignment-desc').value.trim();
+  const lrReceived = document.getElementById('consignment-lr').checked;
+  const delivered = document.getElementById('consignment-delivered').checked;
+  const payment = document.getElementById('consignment-payment').checked;
+
+  const consignments = getData(STORAGE_KEYS.consignments) || [];
+
+  if (id) {
+    const idx = consignments.findIndex(c => String(c.id) === String(id));
+    if (idx !== -1) {
+      consignments[idx] = {
+        ...consignments[idx],
+        partyName: party,
+        orderDate,
+        expectedDelivery,
+        description,
+        lrReceived,
+        delivered,
+        payment,
+        updatedAt: new Date().toISOString()
+      };
+      showToast('Consignment updated', 'success');
+    }
+  } else {
+    consignments.push({
+      id: 'cs_' + Date.now(),
+      partyName: party,
+      orderDate,
+      expectedDelivery,
+      description,
+      lrReceived,
+      delivered,
+      payment,
+      createdAt: new Date().toISOString()
+    });
+    showToast('Consignment saved', 'success');
+  }
+
+  setData(STORAGE_KEYS.consignments, consignments);
+  closeConsignmentModal();
+  renderConsignments();
+}
+
+function toggleConsignmentStatus(id, field, value) {
+  const consignments = getData(STORAGE_KEYS.consignments) || [];
+  const item = consignments.find(c => String(c.id) === String(id));
+  if (item) {
+    item[field] = value;
+    setData(STORAGE_KEYS.consignments, consignments);
+    showToast('Status updated', 'success');
+  }
+}
+
+function deleteConsignment(id) {
+  if (!confirm('Are you sure you want to delete this consignment?')) return;
+  const consignments = getData(STORAGE_KEYS.consignments) || [];
+  const updated = consignments.filter(c => String(c.id) !== String(id));
+  setData(STORAGE_KEYS.consignments, updated);
+  showToast('Consignment deleted', 'warning');
+  renderConsignments();
+}
+
 // ===================================================================
 // DATA IMPORT / EXPORT (ALL DATA)
 // ===================================================================
@@ -4378,8 +5325,42 @@ function renderAnalytics() {
     });
   }
 
-  // 4. Stitching Revenue Only (tailor amount tracker)
-  // (Ready-to-Wear category removed — all garments are custom-stitched)
+  // 4. Stitching vs Ready-to-Wear / Fabric
+  let stitchingRevenue = 0;
+  let fabricRevenue = 0;
+  periodBills.forEach(b => {
+    const tailor = parseFloat(b.tailorAmount) || 0;
+    stitchingRevenue += tailor;
+    fabricRevenue += (parseFloat(b.grandTotal) || 0);
+  });
+
+  if (document.getElementById('analyticsStitchingChart')) {
+    analyticsChartInstances.stitching = new Chart(document.getElementById('analyticsStitchingChart').getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Ready-to-Wear / Fabric', 'Stitching & Tailoring'],
+        datasets: [{
+          data: [fabricRevenue, stitchingRevenue],
+          backgroundColor: ['#3b82f6', '#f59e0b']
+        }]
+      },
+      options: {
+        ...chartOptions,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const val = context.raw || 0;
+                return ` ${context.label}: ₹${val.toFixed(2)}`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
 
   // 5. New vs Repeat Customers
   const customerCounts = {};
@@ -4682,13 +5663,21 @@ function deleteStaff(id) {
 
 // --- Attendance ---
 function getAttendanceData() {
+  const cached = appCache[STORAGE_KEYS.attendance];
+  if (cached && typeof cached === 'object' && !Array.isArray(cached)) return cached;
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.attendance)) || {};
-  } catch { return {}; }
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEYS.attendance));
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      appCache[STORAGE_KEYS.attendance] = data;
+      return data;
+    }
+  } catch { /* ignore */ }
+  return {};
 }
 
 function saveAttendanceData(data) {
-  localStorage.setItem(STORAGE_KEYS.attendance, JSON.stringify(data));
+  // Use setData so attendance syncs to Supabase like other stores
+  setData(STORAGE_KEYS.attendance, data);
 }
 
 function markAttendance(staffId, date, status) {
