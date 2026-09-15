@@ -5824,3 +5824,272 @@ function openAnalyticsDrilldown(title, bills) {
 function closeAnalyticsDrilldown() {
   document.getElementById('analytics-drilldown-modal').classList.remove('active');
 }
+
+// ====================================================================
+// GST MONTHLY SALES REPORT — Styled .xlsx via ExcelJS
+// ====================================================================
+
+const MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+
+function openGSTReportModal() {
+  const now = new Date();
+  const monthSelect = document.getElementById('gst-report-month');
+  const yearSelect = document.getElementById('gst-report-year');
+
+  // Set month to current
+  monthSelect.value = String(now.getMonth());
+
+  // Populate year dropdown (current year - 3 to current year + 1)
+  yearSelect.innerHTML = '';
+  const currentYear = now.getFullYear();
+  for (let y = currentYear - 3; y <= currentYear + 1; y++) {
+    const opt = document.createElement('option');
+    opt.value = y;
+    opt.textContent = y;
+    if (y === currentYear) opt.selected = true;
+    yearSelect.appendChild(opt);
+  }
+
+  document.getElementById('gst-report-modal').classList.add('active');
+}
+
+function closeGSTReportModal() {
+  document.getElementById('gst-report-modal').classList.remove('active');
+}
+
+async function generateGSTReport() {
+  const monthIdx = parseInt(document.getElementById('gst-report-month').value);
+  const year = parseInt(document.getElementById('gst-report-year').value);
+  const monthName = MONTH_NAMES[monthIdx];
+
+  const downloadBtn = document.getElementById('gst-report-download-btn');
+  const originalText = downloadBtn.textContent;
+  downloadBtn.textContent = '⏳ Generating...';
+  downloadBtn.disabled = true;
+
+  try {
+    // Filter bills for the selected month/year
+    const allBills = getData(STORAGE_KEYS.bills) || [];
+    const monthBills = allBills.filter(b => {
+      if (!b.date) return false;
+      const d = new Date(b.date);
+      return d.getMonth() === monthIdx && d.getFullYear() === year;
+    });
+
+    if (monthBills.length === 0) {
+      showToast(`No bills found for ${monthName} ${year}`, 'error');
+      downloadBtn.textContent = originalText;
+      downloadBtn.disabled = false;
+      return;
+    }
+
+    // Sort by bill number ascending
+    monthBills.sort((a, b) => (a.billNumber || 0) - (b.billNumber || 0));
+
+    // Create workbook
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'KALP Billing App';
+    workbook.created = new Date();
+
+    const sheetName = `${monthName} ${year} Bills`;
+    const ws = workbook.addWorksheet(sheetName);
+
+    // ——— Column widths ———
+    ws.columns = [
+      { width: 15 },  // A: Bill Number
+      { width: 13 },  // B: Date
+      { width: 26 },  // C: Customer Name
+      { width: 22 },  // D: Taxable Value
+      { width: 13 },  // E: CGST
+      { width: 13 },  // F: SGST
+      { width: 13 },  // G: Total Amount
+    ];
+
+    // ——— Color constants ———
+    const NAVY = 'FF1F4E78';
+    const ROYAL_BLUE = 'FF2F5597';
+    const GRAY_TEXT = 'FF595959';
+    const WHITE = 'FFFFFFFF';
+    const LIGHT_GRAY = 'FFEAEAEA';
+
+    const segoeUI = { name: 'Segoe UI', family: 2 };
+
+    // ——— Row 1: KALP ———
+    const row1 = ws.getRow(1);
+    row1.getCell(1).value = 'KALP';
+    row1.getCell(1).font = { ...segoeUI, size: 18, bold: true, color: { argb: NAVY } };
+
+    // ——— Row 2: Address ———
+    const row2 = ws.getRow(2);
+    row2.getCell(1).value = 'SHOP NUMBER 14, PRIDE ICON, GOKUL ROAD, HUBLI - 580030';
+    row2.getCell(1).font = { ...segoeUI, size: 9, color: { argb: GRAY_TEXT } };
+
+    // ——— Row 3: Contact ———
+    const row3 = ws.getRow(3);
+    row3.getCell(1).value = 'Phone: 8660213687 | Email: Kalphubli@gmail.com | GSTIN: 29ABEFK9732A1ZB';
+    row3.getCell(1).font = { ...segoeUI, size: 9, color: { argb: GRAY_TEXT } };
+
+    // ——— Row 4: Spacer ———
+
+    // ——— Row 5: Report Title Banner ———
+    ws.mergeCells('A5:G5');
+    const titleCell = ws.getCell('A5');
+    titleCell.value = `BILLING & SALES REPORT - ${monthName.toUpperCase()} ${year}`;
+    titleCell.font = { ...segoeUI, size: 12, bold: true, color: { argb: WHITE } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ROYAL_BLUE } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // ——— Row 6: Spacer ———
+
+    // ——— Row 7: Column Headers ———
+    const headers = ['Bill Number', 'Date', 'Customer Name', 'Taxable Value (Rs)', 'CGST (2.5%)', 'SGST (2.5%)', 'Total Amount (Rs)'];
+    const headerRow = ws.getRow(7);
+    headers.forEach((h, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = h;
+      cell.font = { ...segoeUI, size: 11, bold: true, color: { argb: WHITE } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+    });
+
+    // ——— Data Rows (Row 8 onwards) ———
+    const dataStartRow = 8;
+    monthBills.forEach((bill, idx) => {
+      const rowNum = dataStartRow + idx;
+      const row = ws.getRow(rowNum);
+
+      const grandTotal = parseFloat(bill.grandTotal) || 0;
+
+      // Use stored GST breakdown if available, otherwise reverse-calculate
+      let taxableValue, cgstVal, sgstVal;
+      if (bill.subtotal && bill.cgst && bill.sgst) {
+        taxableValue = parseFloat(bill.subtotal);
+        cgstVal = parseFloat(bill.cgst);
+        sgstVal = parseFloat(bill.sgst);
+      } else {
+        // Reverse calculate from grand total (5% GST inclusive)
+        taxableValue = grandTotal / 1.05;
+        cgstVal = taxableValue * 0.025;
+        sgstVal = taxableValue * 0.025;
+      }
+
+      // A: Bill Number
+      const cellA = row.getCell(1);
+      cellA.value = bill.billNumber;
+      cellA.font = { ...segoeUI, size: 10 };
+      cellA.alignment = { horizontal: 'center' };
+
+      // B: Date
+      const cellB = row.getCell(2);
+      cellB.value = bill.date || '';
+      cellB.font = { ...segoeUI, size: 10 };
+      cellB.alignment = { horizontal: 'center' };
+
+      // C: Customer Name
+      const cellC = row.getCell(3);
+      cellC.value = bill.customerName || 'Walk-in Customer';
+      cellC.font = { ...segoeUI, size: 10 };
+      cellC.alignment = { horizontal: 'left' };
+
+      // D: Taxable Value
+      const cellD = row.getCell(4);
+      cellD.value = taxableValue;
+      cellD.font = { ...segoeUI, size: 10 };
+      cellD.numFmt = '#,##0.00';
+      cellD.alignment = { horizontal: 'right' };
+
+      // E: CGST
+      const cellE = row.getCell(5);
+      cellE.value = cgstVal;
+      cellE.font = { ...segoeUI, size: 10 };
+      cellE.numFmt = '#,##0.00';
+      cellE.alignment = { horizontal: 'right' };
+
+      // F: SGST
+      const cellF = row.getCell(6);
+      cellF.value = sgstVal;
+      cellF.font = { ...segoeUI, size: 10 };
+      cellF.numFmt = '#,##0.00';
+      cellF.alignment = { horizontal: 'right' };
+
+      // G: Total Amount
+      const cellG = row.getCell(7);
+      cellG.value = grandTotal;
+      cellG.font = { ...segoeUI, size: 10 };
+      cellG.numFmt = '#,##0.00';
+      cellG.alignment = { horizontal: 'right' };
+
+      // Thin side borders on data rows
+      [cellA, cellB, cellC, cellD, cellE, cellF, cellG].forEach(c => {
+        c.border = {
+          left: { style: 'thin' },
+          right: { style: 'thin' },
+          bottom: { style: 'thin' }
+        };
+      });
+    });
+
+    // ——— Grand Total Row ———
+    const totalRowNum = dataStartRow + monthBills.length;
+    const lastDataRow = totalRowNum - 1;
+
+    // Merge A:C for "GRAND TOTAL" label
+    ws.mergeCells(`A${totalRowNum}:C${totalRowNum}`);
+    const totalLabelCell = ws.getCell(`A${totalRowNum}`);
+    totalLabelCell.value = 'GRAND TOTAL';
+    totalLabelCell.font = { ...segoeUI, size: 11, bold: true };
+    totalLabelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT_GRAY } };
+    totalLabelCell.alignment = { horizontal: 'right', vertical: 'middle' };
+    totalLabelCell.border = {
+      top: { style: 'thin' },
+      bottom: { style: 'double' },
+      left: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+
+    // SUM formula columns D, E, F, G
+    ['D', 'E', 'F', 'G'].forEach(col => {
+      const cell = ws.getCell(`${col}${totalRowNum}`);
+      cell.value = { formula: `SUM(${col}${dataStartRow}:${col}${lastDataRow})` };
+      cell.font = { ...segoeUI, size: 11, bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT_GRAY } };
+      cell.numFmt = '#,##0.00';
+      cell.alignment = { horizontal: 'right' };
+      cell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'double' },
+        left: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+    });
+
+    // ——— Generate and Download ———
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${monthName}_${year}_Bills_Report.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast(`${monthName} ${year} GST Report downloaded! (${monthBills.length} bills)`, 'success');
+    closeGSTReportModal();
+
+  } catch (err) {
+    console.error('GST Report generation error:', err);
+    showToast('Error generating report: ' + err.message, 'error');
+  } finally {
+    downloadBtn.textContent = originalText;
+    downloadBtn.disabled = false;
+  }
+}

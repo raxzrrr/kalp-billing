@@ -17,6 +17,7 @@
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 </head>
 <body>
 
@@ -124,6 +125,7 @@
           <button class="btn btn-secondary" onclick="document.getElementById('app-data-import').click()">📤 Import Data</button>
           <button class="btn btn-success" onclick="exportAllData()">📥 Export Data</button>
           <button class="btn btn-primary" onclick="exportBillsCSV()">📥 Export Bills (Excel)</button>
+          <button class="btn btn-accent" onclick="openGSTReportModal()">📊 GST Report (.xlsx)</button>
         </div>
       </div>
       <div class="page-content">
@@ -1776,5 +1778,46 @@
     }
   });
 </script>
+
+<!-- GST Report Month Picker Modal -->
+<div class="modal-overlay" id="gst-report-modal">
+  <div class="modal" style="max-width: 420px;">
+    <div class="modal-header">
+      <h3 class="modal-title">📊 Download GST Sales Report</h3>
+      <button class="modal-close" onclick="closeGSTReportModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 4px;">Select the month and year to generate a professionally formatted Billing & Sales Report (.xlsx)</p>
+      <div style="display: flex; gap: 12px;">
+        <div class="form-group" style="flex: 1;">
+          <label class="form-label">Month</label>
+          <select id="gst-report-month" class="form-input">
+            <option value="0">January</option>
+            <option value="1">February</option>
+            <option value="2">March</option>
+            <option value="3">April</option>
+            <option value="4">May</option>
+            <option value="5">June</option>
+            <option value="6">July</option>
+            <option value="7">August</option>
+            <option value="8">September</option>
+            <option value="9">October</option>
+            <option value="10">November</option>
+            <option value="11">December</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex: 0.6;">
+          <label class="form-label">Year</label>
+          <select id="gst-report-year" class="form-input"></select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeGSTReportModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="generateGSTReport()" id="gst-report-download-btn">📥 Download Report</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

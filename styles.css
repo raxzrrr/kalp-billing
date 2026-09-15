@@ -1349,3 +1349,38 @@ body.printing-bill #bill-professional-print {
   color: #dc2626;
 }
 
+/* GST Report Button */
+.btn-accent {
+  background: linear-gradient(135deg, #0d7377, #14919b);
+  color: #fff;
+  border: none;
+  padding: 10px 18px;
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(13, 115, 119, 0.25);
+}
+.btn-accent:hover {
+  background: linear-gradient(135deg, #14919b, #0d7377);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(13, 115, 119, 0.35);
+}
+.btn-accent:active {
+  transform: translateY(0);
+}
+.btn-accent:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@keyframes gst-spin {
+  to { transform: rotate(360deg); }
+}
+.gst-generating .btn-accent {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
