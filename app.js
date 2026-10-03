@@ -2708,12 +2708,14 @@ function applyTailoringCatalogPreset(rowId) {
   const select = row.querySelector('.stitching-preset');
   const nameInput = row.querySelector('.stitching-name');
   const rateInput = row.querySelector('.stitching-rate');
+  const totalDiv = row.querySelector('.stitching-total-display');
   const selected = select.value;
-  if (selected && TAILORING_CATALOG[selected] !== undefined) {
-    nameInput.value = selected;
-    rateInput.value = TAILORING_CATALOG[selected];
-    updateStitchingRowTotal(rowId);
-  }
+  const rate = selected && TAILORING_CATALOG[selected] !== undefined ? TAILORING_CATALOG[selected] : 0;
+  const qty = parseFloat(row.querySelector('.stitching-qty').value) || 1;
+  if (nameInput) nameInput.value = selected || '';
+  if (rateInput) rateInput.value = rate;
+  if (totalDiv) totalDiv.textContent = '\u20b9' + (qty * rate).toFixed(2);
+  calculateTailorAmount();
 }
 
 function addStitchingItemRow(item = { name: '', qty: 1, rate: 0 }) {
@@ -2723,26 +2725,27 @@ function addStitchingItemRow(item = { name: '', qty: 1, rate: 0 }) {
   const row = document.createElement('div');
   row.className = 'stitching-item-row';
   row.id = rowId;
-  const initialTotal = ((parseFloat(item.qty) || 1) * (parseFloat(item.rate) || 0)).toFixed(2);
+  row.style.cssText = 'display:flex; gap:10px; align-items:center;';
 
-  // Find which preset matches the item name (if any)
+  const qty = parseFloat(item.qty) || 1;
+  const rate = parseFloat(item.rate) || 0;
+  const initialTotal = (qty * rate).toFixed(2);
+
+  // Match preset from catalog
   const presetMatch = item.name && TAILORING_CATALOG[item.name] !== undefined ? item.name : '';
-
   const catalogOptions = Object.entries(TAILORING_CATALOG)
-    .map(([name, price]) => `<option value="${name}" ${presetMatch === name ? 'selected' : ''}>${name} — ₹${price}</option>`)
+    .map(([name, price]) => `<option value="${name}" ${presetMatch === name ? 'selected' : ''}>${name} - \u20b9${price}</option>`)
     .join('');
 
   row.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:4px; flex:2;">
-      <select class="form-input input-sm stitching-preset" onchange="applyTailoringCatalogPreset('${rowId}')" style="font-size:0.8rem;">
-        <option value="">Select Item...</option>
-        ${catalogOptions}
-      </select>
-      <input type="text" class="form-input input-sm stitching-name" placeholder="Custom name (optional)" value="${esc(item.name || '')}" oninput="calculateTailorAmount()" style="font-size:0.78rem;">
-    </div>
-    <input type="number" class="form-input input-sm stitching-qty" placeholder="Qty" min="1" step="1" value="${item.qty || 1}" oninput="updateStitchingRowTotal('${rowId}')">
-    <input type="number" class="form-input input-sm stitching-rate" placeholder="Rate (₹)" min="0" step="1" value="${item.rate || ''}" oninput="updateStitchingRowTotal('${rowId}')">
-    <input type="text" class="form-input input-sm stitching-total" placeholder="0.00" readonly value="${initialTotal}">
+    <select class="form-input input-sm stitching-preset" style="flex:2;" onchange="applyTailoringCatalogPreset('${rowId}')">
+      <option value="">Select Item...</option>
+      ${catalogOptions}
+    </select>
+    <input type="number" class="form-input input-sm stitching-qty" style="flex:1; max-width:80px;" value="${qty}" min="1" step="1" oninput="updateStitchingRowTotal('${rowId}')">
+    <div class="stitching-total-display" style="width:80px; text-align:right; font-size:0.875rem; font-weight:600; color:var(--text-primary); flex-shrink:0;">₹${initialTotal}</div>
+    <input type="hidden" class="stitching-name" value="${esc(item.name || '')}">
+    <input type="hidden" class="stitching-rate" value="${rate}">
     <button type="button" class="btn btn-ghost btn-sm" onclick="removeStitchingItemRow('${rowId}')" title="Remove" style="padding:4px 8px;color:#ef4444;">✕</button>
   `;
   list.appendChild(row);
@@ -2754,7 +2757,9 @@ function updateStitchingRowTotal(rowId) {
   if (!row) return;
   const qty = parseFloat(row.querySelector('.stitching-qty').value) || 0;
   const rate = parseFloat(row.querySelector('.stitching-rate').value) || 0;
-  row.querySelector('.stitching-total').value = (qty * rate).toFixed(2);
+  const total = (qty * rate).toFixed(2);
+  const totalDiv = row.querySelector('.stitching-total-display');
+  if (totalDiv) totalDiv.textContent = '\u20b9' + total;
   calculateTailorAmount();
 }
 
@@ -2775,8 +2780,8 @@ function calculateTailorAmount() {
 
   let itemsSum = 0;
   document.querySelectorAll('.stitching-item-row').forEach(row => {
-    const qty = parseFloat(row.querySelector('.stitching-qty').value) || 0;
-    const rate = parseFloat(row.querySelector('.stitching-rate').value) || 0;
+    const qty = parseFloat(row.querySelector('.stitching-qty')?.value) || 0;
+    const rate = parseFloat(row.querySelector('.stitching-rate')?.value) || 0;
     itemsSum += (qty * rate);
   });
 
