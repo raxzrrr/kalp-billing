@@ -2,3 +2,17 @@
 *.log
 scratch/
 July_2026_Bills_Report.xlsx
+
+# Temporary working folders
+temp/
+test-automation/
+
+# Script dependencies
+scripts/node_modules/
+scripts/package-lock.json
+
+# Backup data files (large, not needed in git)
+*.json
+!manifest.json
+!vercel.json
+!supabase/*.sql
