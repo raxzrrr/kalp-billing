@@ -1411,6 +1411,85 @@ function editBill(id) {
   showToast('Editing bill...', 'info');
 }
 
+// --- Open Bill by id, billNumber, or Order Ledger reference ---
+function openBill(identifier) {
+  if (identifier === undefined || identifier === null || identifier === '') return;
+
+  // Close any active modal overlays
+  document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+
+  const bills = getData(STORAGE_KEYS.bills) || [];
+  const cleanId = String(identifier).trim();
+
+  // 1. Try finding in active bills by id
+  let bill = bills.find(b => b.id === identifier || String(b.id) === cleanId);
+
+  // 2. Try by billNumber (numeric or string)
+  if (!bill) {
+    let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
+    let num = parseInt(numStr, 10);
+    if (!isNaN(num)) bill = bills.find(b => Number(b.billNumber) === num);
+    if (!bill) bill = bills.find(b => String(b.billNumber) === numStr);
+  }
+
+  // 3. Fallback: Check Order Ledger
+  if (!bill) {
+    const orders = getData(STORAGE_KEYS.orders) || [];
+    let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
+    let num = parseInt(numStr, 10);
+    let order = orders.find(o =>
+      o.id === identifier || String(o.id) === cleanId ||
+      (o.billId && String(o.billId) === cleanId)
+    );
+    if (!order && !isNaN(num)) {
+      order = orders.find(o =>
+        Number(o.billNumber) === num ||
+        (String(o.billNumber).replace(/\D/g, '') === String(num))
+      );
+    }
+    if (!order) order = orders.find(o => String(o.billNumber) === numStr);
+    if (order) {
+      const bNo = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || num || 1;
+      bill = {
+        id: order.billId || order.id || Date.now(),
+        billNumber: bNo,
+        customerName: order.customerName || '',
+        phone: order.phone || '',
+        date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
+        tailorAmount: order.tailor || 0,
+        advancePaid: order.advance || 0,
+        deliveryDate: order.deliveryDate || '',
+        noDelivery: !order.deliveryDate,
+        orderNumber: order.orderNumber || '',
+        items: [{ itemName: 'Fabric Charges', qty: '1', price: String(order.fabric || order.total || 0), total: parseFloat(order.fabric || order.total || 0) }],
+        grandTotal: parseFloat(order.fabric || order.total || 0),
+        subtotal: parseFloat(order.fabric || order.total || 0),
+        gstMode: 'including'
+      };
+    }
+  }
+
+  if (bill) {
+    editBill(bill.id || bill.billNumber);
+    return;
+  }
+
+  // 4. Check deleted bills
+  const deletedBills = getData(STORAGE_KEYS.deletedBills) || [];
+  let delBill = deletedBills.find(b => b.id === identifier || String(b.id) === cleanId);
+  if (!delBill) {
+    let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
+    let num = parseInt(numStr, 10);
+    if (!isNaN(num)) delBill = deletedBills.find(b => Number(b.billNumber) === num);
+  }
+  if (delBill) {
+    showToast(`Bill #KALP-${String(delBill.billNumber).padStart(4, '0')} is in the Recycle Bin.`, 'warning');
+    openDeletedBillsModal();
+  } else {
+    showToast(`Bill "${identifier}" not found.`, 'error');
+  }
+}
+
 function renderSalesChart(bills) {
   const chart = document.getElementById('sales-chart');
   const days = [];
@@ -2600,6 +2679,43 @@ function toggleTailoringSection(isNoTailor) {
   updatePendingAmount();
 }
 
+// Preset catalog for quick garment selection
+const TAILORING_CATALOG = {
+  'Basic Shirt': 550,
+  'Pattern Shirt': 600,
+  'Hunter Shirt': 700,
+  'Basic Pant': 700,
+  'Pant & Shirt': 1250,
+  'Kurta Basic': 650,
+  'Kurta Pattern': 700,
+  'Kurta Pant': 1350,
+  'Pathani': 1350,
+  'Pathani Pattern': 1450,
+  'Safari Suit': 1700,
+  'Waist Coat (V-Neck)': 1400,
+  'Waist Coat (Round Neck)': 1600,
+  'Blazer': 2800,
+  'Blazer Pattern': 3100,
+  'Suit (2 Piece)': 3500,
+  'Suit (3 Piece)': 4950,
+  'Jodhpuri Suit with Pant': 3500,
+  'Jodhpuri Pant & Kurta': 4150
+};
+
+function applyTailoringCatalogPreset(rowId) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const select = row.querySelector('.stitching-preset');
+  const nameInput = row.querySelector('.stitching-name');
+  const rateInput = row.querySelector('.stitching-rate');
+  const selected = select.value;
+  if (selected && TAILORING_CATALOG[selected] !== undefined) {
+    nameInput.value = selected;
+    rateInput.value = TAILORING_CATALOG[selected];
+    updateStitchingRowTotal(rowId);
+  }
+}
+
 function addStitchingItemRow(item = { name: '', qty: 1, rate: 0 }) {
   const list = document.getElementById('stitching-items-list');
   if (!list) return;
@@ -2608,8 +2724,22 @@ function addStitchingItemRow(item = { name: '', qty: 1, rate: 0 }) {
   row.className = 'stitching-item-row';
   row.id = rowId;
   const initialTotal = ((parseFloat(item.qty) || 1) * (parseFloat(item.rate) || 0)).toFixed(2);
+
+  // Find which preset matches the item name (if any)
+  const presetMatch = item.name && TAILORING_CATALOG[item.name] !== undefined ? item.name : '';
+
+  const catalogOptions = Object.entries(TAILORING_CATALOG)
+    .map(([name, price]) => `<option value="${name}" ${presetMatch === name ? 'selected' : ''}>${name} — ₹${price}</option>`)
+    .join('');
+
   row.innerHTML = `
-    <input type="text" class="form-input input-sm stitching-name" placeholder="Garment (e.g. Kurta, Pant, Blouse)" value="${esc(item.name || '')}" oninput="calculateTailorAmount()">
+    <div style="display:flex; flex-direction:column; gap:4px; flex:2;">
+      <select class="form-input input-sm stitching-preset" onchange="applyTailoringCatalogPreset('${rowId}')" style="font-size:0.8rem;">
+        <option value="">Select Item...</option>
+        ${catalogOptions}
+      </select>
+      <input type="text" class="form-input input-sm stitching-name" placeholder="Custom name (optional)" value="${esc(item.name || '')}" oninput="calculateTailorAmount()" style="font-size:0.78rem;">
+    </div>
     <input type="number" class="form-input input-sm stitching-qty" placeholder="Qty" min="1" step="1" value="${item.qty || 1}" oninput="updateStitchingRowTotal('${rowId}')">
     <input type="number" class="form-input input-sm stitching-rate" placeholder="Rate (₹)" min="0" step="1" value="${item.rate || ''}" oninput="updateStitchingRowTotal('${rowId}')">
     <input type="text" class="form-input input-sm stitching-total" placeholder="0.00" readonly value="${initialTotal}">
@@ -4236,34 +4366,38 @@ function printBarcode(id) {
   const barcodes = getData(STORAGE_KEYS.barcodes);
   const item = barcodes.find(b => b.id === id);
   if (!item) return;
-
-  // For saved barcodes, we could ask for quantity if needed, 
-  // but for now, we follow the user's specific request for the creation form.
   const printCount = parseInt(document.getElementById('barcode-print-count')?.value) || 1;
-  printBarcodeSticker(item.name, item.price, item.barcodeValue, printCount);
+  printBarcodeSticker(item.name, item.price, item.barcodeValue, printCount, item.supplierName || '', item.fabricCode || '');
 }
 
 function printSingleBarcode() {
   if (!lastGeneratedBarcode) return;
-  const { name, price, barcodeValue } = lastGeneratedBarcode;
+  const { name, price, barcodeValue, supplierName, fabricCode } = lastGeneratedBarcode;
   const printCount = parseInt(document.getElementById('barcode-print-count')?.value) || 1;
-  printBarcodeSticker(name, price, barcodeValue, printCount);
+  printBarcodeSticker(name, price, barcodeValue, printCount, supplierName || '', fabricCode || '');
 }
 
 /**
  * Print a barcode sticker using Chrome's default print dialog.
  * Uses SVG (vector) for crisp, high-resolution barcode output.
- * All info (name, barcode, price) compact on a single page.
+ * All info (name, supplier, fabric code, barcode, price) compact on a single page.
  */
-function printBarcodeSticker(name, price, barcodeValue, count = 1) {
+function printBarcodeSticker(name, price, barcodeValue, count = 1, supplierName = '', fabricCode = '') {
   const printArea = document.getElementById('barcode-print-area');
 
   // 1. Build multiple sticker HTML elements based on count
   let stickersHTML = '';
   for (let i = 0; i < count; i++) {
+    const metaStr = (supplierName || fabricCode)
+      ? `<div class="bps-meta" style="font-family:Arial,sans-serif;font-size:9px;color:#555;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px;">
+           ${supplierName ? `Sup: ${esc(supplierName)}` : ''}
+           ${fabricCode ? `${supplierName ? ' | ' : ''}Code: ${esc(fabricCode)}` : ''}
+         </div>`
+      : '';
     stickersHTML += `
       <div class="barcode-print-sticker">
         <div class="bps-name">${esc(name)}</div>
+        ${metaStr}
         <svg class="bps-barcode-svg" data-index="${i}"></svg>
         <div class="bps-price">₹${parseFloat(price).toFixed(2)}</div>
       </div>
