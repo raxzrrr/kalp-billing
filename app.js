@@ -5233,29 +5233,38 @@ function importAllData(event) {
       if (supabaseClient && navigator.onLine) {
         try {
           // 2a. Push bills to dedicated kalp_bills table (for realtime support)
+          // First DELETE all existing cloud bills — import is a full overwrite
           const bills = importedData[STORAGE_KEYS.bills];
-          if (Array.isArray(bills) && bills.length > 0) {
-            const BATCH = 50;
-            let billErrors = 0;
-            for (let i = 0; i < bills.length; i += BATCH) {
-              const batch = bills.slice(i, i + BATCH);
-              const rows = batch.map(b => ({
-                id: b.id,
-                bill_number: b.billNumber,
-                customer_name: b.customerName || 'Walk-in Customer',
-                phone: b.phone || '',
-                date: b.date || new Date().toISOString().split('T')[0],
-                grand_total: b.grandTotal || 0,
-                raw_data: b,
-                updated_at: new Date().toISOString()
-              }));
-              const { error } = await supabaseClient.from('kalp_bills').upsert(rows, { onConflict: 'id' });
-              if (error) billErrors++;
+          if (Array.isArray(bills)) {
+            const { error: delError } = await supabaseClient
+              .from('kalp_bills')
+              .delete()
+              .neq('id', -1); // neq -1 matches all rows (safe delete-all)
+            if (delError) console.warn('Cloud bills clear warning:', delError.message);
+
+            if (bills.length > 0) {
+              const BATCH = 50;
+              let billErrors = 0;
+              for (let i = 0; i < bills.length; i += BATCH) {
+                const batch = bills.slice(i, i + BATCH);
+                const rows = batch.map(b => ({
+                  id: b.id,
+                  bill_number: b.billNumber,
+                  customer_name: b.customerName || 'Walk-in Customer',
+                  phone: b.phone || '',
+                  date: b.date || new Date().toISOString().split('T')[0],
+                  grand_total: b.grandTotal || 0,
+                  raw_data: b,
+                  updated_at: new Date().toISOString()
+                }));
+                const { error } = await supabaseClient.from('kalp_bills').upsert(rows, { onConflict: 'id' });
+                if (error) billErrors++;
+              }
+              const billStatus = billErrors === 0
+                ? `${bills.length} bills synced`
+                : `${bills.length - billErrors * 50} bills synced (${billErrors} batch errors)`;
+              showToast(`☁️ ${billStatus} to cloud`, billErrors === 0 ? 'success' : 'warning');
             }
-            const billStatus = billErrors === 0
-              ? `${bills.length} bills synced`
-              : `${bills.length - billErrors * 50} bills synced (${billErrors} batch errors)`;
-            showToast(`☁️ ${billStatus} to cloud`, billErrors === 0 ? 'success' : 'warning');
           }
 
           // 2b. Push all other keys to kalp_store
