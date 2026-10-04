@@ -2378,6 +2378,8 @@ function updateDeliveriesDashboard() {
 
 let currentDeliveriesTab = 'pending';
 
+let cachedDeliveries = [];
+
 function switchDeliveriesTab(tab) {
   currentDeliveriesTab = tab;
   document.getElementById('tab-del-pending').style.borderBottomColor = tab === 'pending' ? 'var(--primary-color)' : 'transparent';
@@ -2388,13 +2390,12 @@ function switchDeliveriesTab(tab) {
   
   document.getElementById('deliveries-action-header').textContent = tab === 'pending' ? 'Delivered' : 'Undo';
   
-  openDeliveriesModal();
+  renderDeliveriesFiltered();
 }
 
 function openDeliveriesModal() {
   const orders = getData(STORAGE_KEYS.orders) || [];
   const bills = getData(STORAGE_KEYS.bills) || [];
-  const today = new Date().toISOString().split('T')[0];
   const body = document.getElementById('deliveries-table-body');
   if (!body) return;
   
@@ -2452,21 +2453,61 @@ function openDeliveriesModal() {
     }
   });
 
+  cachedDeliveries = allDeliveries;
+
+  const pendingCount = allDeliveries.filter(o => !o.isDelivered).length;
+  const completedCount = allDeliveries.filter(o => o.isDelivered).length;
+
+  const tabPending = document.getElementById('tab-del-pending');
+  const tabCompleted = document.getElementById('tab-del-completed');
+  if (tabPending) tabPending.innerHTML = `Pending <span style="background: rgba(239,68,68,0.12); color: #ef4444; padding: 2px 7px; border-radius: 10px; font-size: 0.75rem; margin-left: 4px; font-weight:700;">${pendingCount}</span>`;
+  if (tabCompleted) tabCompleted.innerHTML = `Delivered <span style="background: rgba(34,197,94,0.12); color: #16a34a; padding: 2px 7px; border-radius: 10px; font-size: 0.75rem; margin-left: 4px; font-weight:700;">${completedCount}</span>`;
+
+  const searchInput = document.getElementById('deliveries-search-input');
+  if (searchInput) searchInput.value = '';
+
+  renderDeliveriesFiltered();
+  document.getElementById('deliveries-modal').classList.add('active');
+}
+
+function filterDeliveriesTable() {
+  renderDeliveriesFiltered();
+}
+
+function renderDeliveriesFiltered() {
+  const body = document.getElementById('deliveries-table-body');
+  if (!body) return;
+
+  const today = new Date().toISOString().split('T')[0];
+  const query = (document.getElementById('deliveries-search-input')?.value || '').trim().toLowerCase();
+
   // Filter based on active tab
   let deliveries = [];
   if (currentDeliveriesTab === 'pending') {
-    deliveries = allDeliveries.filter(o => !o.isDelivered);
+    deliveries = cachedDeliveries.filter(o => !o.isDelivered);
     deliveries.sort((a, b) => new Date(a.deliveryDate) - new Date(b.deliveryDate));
   } else {
-    deliveries = allDeliveries.filter(o => o.isDelivered);
-    deliveries.sort((a, b) => new Date(b.deliveryDate) - new Date(a.deliveryDate)); // closest past date first
+    deliveries = cachedDeliveries.filter(o => o.isDelivered);
+    deliveries.sort((a, b) => new Date(b.deliveryDate) - new Date(a.deliveryDate));
   }
-  
+
+  if (query) {
+    deliveries = deliveries.filter(d => {
+      const bStr = String(d.billNumber || '').toLowerCase();
+      const name = String(d.customerName || '').toLowerCase();
+      const phone = String(d.phone || '').toLowerCase();
+      const date = String(d.deliveryDate || '').toLowerCase();
+      return bStr.includes(query) || name.includes(query) || phone.includes(query) || date.includes(query);
+    });
+  }
+
   if (deliveries.length === 0) {
-    const emptyMsg = currentDeliveriesTab === 'pending' ? 'No pending fabric deliveries.' : 'No completed deliveries yet.';
-    body.innerHTML = `<tr><td colspan="6"><div class="empty-state">
-      <div class="empty-icon">🎉</div><div class="empty-text">All Clear</div>
-      <div class="empty-sub">${emptyMsg}</div>
+    const emptyMsg = query 
+      ? `No ${currentDeliveriesTab} deliveries match "${esc(query)}".`
+      : (currentDeliveriesTab === 'pending' ? 'No pending fabric deliveries.' : 'No completed deliveries yet.');
+    body.innerHTML = `<tr><td colspan="6"><div class="empty-state" style="padding: 24px; text-align: center;">
+      <div class="empty-icon">🎉</div><div class="empty-text" style="font-weight: 700; margin-top: 6px;">${query ? 'No matching results' : 'All Clear'}</div>
+      <div class="empty-sub" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 4px;">${emptyMsg}</div>
     </div></td></tr>`;
   } else {
     body.innerHTML = deliveries.map(d => {
@@ -2485,7 +2526,6 @@ function openDeliveriesModal() {
           dateLabel = `<span style="font-weight:700;">Tomorrow</span>`;
         }
       } else {
-        // For completed, keep it grayed out slightly
         dateLabel = `<span style="color:var(--text-muted);">${dateLabel}</span>`;
       }
 
@@ -2516,8 +2556,6 @@ function openDeliveriesModal() {
       </tr>`;
     }).join('');
   }
-  
-  document.getElementById('deliveries-modal').classList.add('active');
 }
 
 function toggleTailorPaid(orderIdOrBillId, isPaid) {
