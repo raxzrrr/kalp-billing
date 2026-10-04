@@ -27,6 +27,8 @@ const STORE_KEYS = [
   'kalp_theme',
   'kalp_bill_counter',
   'kalp_barcode_counter',
+  'kalp_staff',
+  'kalp_attendance',
 ];
 
 // Helper: parse value (all values in backup are JSON strings or plain strings)
@@ -41,8 +43,16 @@ async function main() {
   console.log('🚀 KALP Supabase Restore Script');
   console.log('================================\n');
 
-  // 1. Load backup
-  const backupPath = path.join(__dirname, '..', 'temp', 'kalp_backup_2026-10-02.json');
+  // 1. Load backup — accepts --backup /path/to/file.json or uses default
+  const cliArg = process.argv.find(a => a.startsWith('--backup=') || a === '--backup');
+  let backupPath;
+  if (cliArg === '--backup') {
+    backupPath = process.argv[process.argv.indexOf('--backup') + 1];
+  } else if (cliArg && cliArg.startsWith('--backup=')) {
+    backupPath = cliArg.split('=').slice(1).join('=');
+  } else {
+    backupPath = path.join(__dirname, '..', 'kalp_backup_2026-10-03 (3).json');
+  }
   if (!fs.existsSync(backupPath)) {
     console.error('❌ Backup file not found:', backupPath);
     process.exit(1);
