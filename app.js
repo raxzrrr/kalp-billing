@@ -970,7 +970,11 @@ function openChartDetailModal(period) {
       const txt = bill.totalPending > 0 ? 'Pending' : 'Paid';
 
       return `<tr>
-        <td style="font-weight:600;color:var(--text-accent)">#${bill.billNumber}</td>
+        <td>
+          <span class="clickable-bill-no" onclick="openBill('${bill.id}')" title="Preview Bill #${bill.billNumber}">
+            #${bill.billNumber}
+          </span>
+        </td>
         <td>${esc(bill.customerName || 'Walk-in')}</td>
         <td>${formatDate(bill.date)}</td>
         <td style="text-align: right; font-weight: 500;">${tailor > 0 ? formatCurrency(tailor) : '-'}</td>
@@ -1513,88 +1517,179 @@ function editBill(idOrBill) {
   showToast('Editing bill...', 'info');
 }
 
-// --- Open Bill by id, billNumber, or Order Ledger reference ---
-function openBill(identifier) {
-  if (identifier === undefined || identifier === null || identifier === '') return;
+let currentPreviewBill = null;
 
-  // Close any active modal overlays
-  document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+// --- Open Bill Preview by id, billNumber, or Order Ledger reference ---
+function openBill(identifier) {
+  openBillPreviewModal(identifier);
+}
+
+function openBillPreviewModal(idOrBill) {
+  if (idOrBill === undefined || idOrBill === null || idOrBill === '') return;
 
   const bills = getData(STORAGE_KEYS.bills) || [];
-  const cleanId = String(identifier).trim();
+  let bill = null;
 
-  // 1. Try finding in active bills by id (number or string)
-  let bill = bills.find(b => b.id === identifier || String(b.id) === cleanId || b.id == identifier);
+  if (typeof idOrBill === 'object' && idOrBill !== null) {
+    bill = idOrBill;
+  } else {
+    const cleanId = String(idOrBill).trim();
 
-  // 2. Try by billNumber (numeric or string)
-  if (!bill) {
-    let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
-    let num = parseInt(numStr, 10);
-    if (!isNaN(num)) bill = bills.find(b => Number(b.billNumber) === num || b.billNumber == num);
-    if (!bill) bill = bills.find(b => String(b.billNumber) === numStr || String(b.billNumber) === cleanId);
-  }
+    // 1. Try finding in active bills by id (number or string)
+    bill = bills.find(b => b.id === idOrBill || String(b.id) === cleanId || b.id == idOrBill);
 
-  // 3. Fallback: Check Order Ledger
-  if (!bill) {
-    const orders = getData(STORAGE_KEYS.orders) || [];
-    let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
-    let num = parseInt(numStr, 10);
-    let order = orders.find(o =>
-      o.id === identifier || String(o.id) === cleanId || o.id == identifier ||
-      (o.billId && (o.billId === identifier || String(o.billId) === cleanId || o.billId == identifier))
-    );
-    if (!order && !isNaN(num)) {
-      order = orders.find(o =>
-        Number(o.billNumber) === num ||
-        (String(o.billNumber).replace(/\D/g, '') === String(num))
+    // 2. Try by billNumber (numeric or string)
+    if (!bill) {
+      let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
+      let num = parseInt(numStr, 10);
+      if (!isNaN(num)) bill = bills.find(b => Number(b.billNumber) === num || b.billNumber == num);
+      if (!bill) bill = bills.find(b => String(b.billNumber) === numStr || String(b.billNumber) === cleanId);
+    }
+
+    // 3. Fallback: Check Order Ledger
+    if (!bill) {
+      const orders = getData(STORAGE_KEYS.orders) || [];
+      let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
+      let num = parseInt(numStr, 10);
+      let order = orders.find(o =>
+        o.id === idOrBill || String(o.id) === cleanId || o.id == idOrBill ||
+        (o.billId && (o.billId === idOrBill || String(o.billId) === cleanId || o.billId == idOrBill))
       );
-    }
-    if (!order) order = orders.find(o => String(o.billNumber) === numStr || String(o.billNumber) === cleanId);
-    if (order) {
-      if (order.billId) {
-        bill = bills.find(b => b.id == order.billId || String(b.id) === String(order.billId));
+      if (!order && !isNaN(num)) {
+        order = orders.find(o =>
+          Number(o.billNumber) === num ||
+          (String(o.billNumber).replace(/\D/g, '') === String(num))
+        );
       }
-      if (!bill) {
-        const bNo = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || num || 1;
-        bill = {
-          id: order.billId || order.id || Date.now(),
-          billNumber: bNo,
-          customerName: order.customerName || 'Walk-in Customer',
-          phone: order.phone || '',
-          date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
-          tailorAmount: order.tailor || 0,
-          advancePaid: order.advance || 0,
-          deliveryDate: order.deliveryDate || '',
-          noDelivery: !order.deliveryDate,
-          orderNumber: order.orderNumber || '',
-          items: [{ itemName: 'Fabric Charges', qty: '1', price: String(order.fabric || order.total || 0), total: parseFloat(order.fabric || order.total || 0) }],
-          grandTotal: parseFloat(order.fabric || order.total || 0),
-          subtotal: parseFloat(order.fabric || order.total || 0),
-          gstMode: 'including'
-        };
+      if (!order) order = orders.find(o => String(o.billNumber) === numStr || String(o.billNumber) === cleanId);
+      if (order) {
+        if (order.billId) {
+          bill = bills.find(b => b.id == order.billId || String(b.id) === String(order.billId));
+        }
+        if (!bill) {
+          const bNo = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || num || 1;
+          bill = {
+            id: order.billId || order.id || Date.now(),
+            billNumber: bNo,
+            customerName: order.customerName || 'Walk-in Customer',
+            phone: order.phone || '',
+            date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
+            tailorAmount: order.tailor || 0,
+            advancePaid: order.advance || 0,
+            deliveryDate: order.deliveryDate || '',
+            noDelivery: !order.deliveryDate,
+            orderNumber: order.orderNumber || '',
+            items: [{ itemName: 'Fabric Charges', qty: 1, price: parseFloat(order.fabric || order.total || 0), total: parseFloat(order.fabric || order.total || 0) }],
+            grandTotal: parseFloat(order.fabric || order.total || 0),
+            subtotal: parseFloat(order.fabric || order.total || 0),
+            gstMode: 'including'
+          };
+        }
       }
     }
   }
 
-  if (bill) {
-    editBill(bill);
+  if (!bill) {
+    // 4. Check deleted bills
+    const cleanId = String(idOrBill).trim();
+    const deletedBills = getData(STORAGE_KEYS.deletedBills) || [];
+    let delBill = deletedBills.find(b => b.id === idOrBill || String(b.id) === cleanId || b.id == idOrBill);
+    if (!delBill) {
+      let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
+      let num = parseInt(numStr, 10);
+      if (!isNaN(num)) delBill = deletedBills.find(b => Number(b.billNumber) === num);
+    }
+    if (delBill) {
+      showToast(`Bill #KALP-${String(delBill.billNumber).padStart(4, '0')} is in the Recycle Bin.`, 'warning');
+      openDeletedBillsModal();
+      return;
+    }
+    showToast(`Bill "${idOrBill}" not found.`, 'error');
     return;
   }
 
-  // 4. Check deleted bills
-  const deletedBills = getData(STORAGE_KEYS.deletedBills) || [];
-  let delBill = deletedBills.find(b => b.id === identifier || String(b.id) === cleanId || b.id == identifier);
-  if (!delBill) {
-    let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
-    let num = parseInt(numStr, 10);
-    if (!isNaN(num)) delBill = deletedBills.find(b => Number(b.billNumber) === num);
+  // Ensure items structure exists safely
+  if (!Array.isArray(bill.items) || bill.items.length === 0) {
+    bill.items = [{
+      itemName: 'Fabric Charges',
+      qty: 1,
+      price: parseFloat(bill.grandTotal || bill.subtotal || 0),
+      total: parseFloat(bill.grandTotal || bill.subtotal || 0)
+    }];
   }
-  if (delBill) {
-    showToast(`Bill #KALP-${String(delBill.billNumber).padStart(4, '0')} is in the Recycle Bin.`, 'warning');
-    openDeletedBillsModal();
-  } else {
-    showToast(`Bill "${identifier}" not found.`, 'error');
+
+  currentPreviewBill = bill;
+
+  const modal = document.getElementById('bill-preview-modal');
+  const body = document.getElementById('bill-preview-body');
+  const title = document.getElementById('bill-preview-title');
+  const badge = document.getElementById('bill-preview-badge');
+  const footerInfo = document.getElementById('bill-preview-footer-info');
+  const editBtn = document.getElementById('btn-preview-edit-bill');
+  const editBtnFooter = document.getElementById('btn-preview-edit-bill-footer');
+
+  if (!modal || !body) return;
+
+  const shop = getShopDetails();
+  const billDisplayNo = String(bill.billNumber || '').replace(/\D/g, '');
+  const billNoStr = `#KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : String(bill.billNumber || '0000')}`;
+
+  if (title) title.textContent = `📄 Bill Preview: ${bill.customerName || 'Walk-in Customer'}`;
+  if (badge) badge.textContent = billNoStr;
+
+  const fabricAmount = parseFloat(bill.grandTotal || bill.subtotal || 0);
+  const tailorAmount = parseFloat(bill.tailorAmount || 0);
+  const totalAmount = fabricAmount + tailorAmount;
+  const advance = parseFloat(bill.advancePaid || 0);
+  const totalDue = parseFloat(bill.totalPending) !== undefined && bill.totalPending !== null ? parseFloat(bill.totalPending) : (totalAmount - advance);
+  const isPaid = totalDue <= 0.01;
+
+  if (footerInfo) {
+    footerInfo.innerHTML = `<strong>${billNoStr}</strong> • Date: ${formatDate(bill.date)} • Fabric: ${formatCurrency(fabricAmount)} ${tailorAmount > 0 ? `• Tailoring: ${formatCurrency(tailorAmount)}` : ''} • <span class="badge ${isPaid ? 'badge-success' : 'badge-warning'}">${isPaid ? 'Paid' : `Due: ${formatCurrency(totalDue)}`}</span>`;
   }
+
+  const handleEdit = () => {
+    closeBillPreviewModal();
+    editBill(bill);
+  };
+  if (editBtn) editBtn.onclick = handleEdit;
+  if (editBtnFooter) editBtnFooter.onclick = handleEdit;
+
+  const frontHTML = renderFrontBillPageHTML(bill, shop);
+  const backHTML = renderBackBillPageHTML(bill, shop);
+
+  body.innerHTML = `
+    <div class="bill-preview-paper-container">
+      <div class="bill-preview-page-card">
+        <div class="bill-preview-page-header">
+          <span class="bill-preview-tag">📄 Side 1: Cash Bill / GST Invoice</span>
+          <button class="btn btn-outline btn-sm" style="font-size: 0.72rem; padding: 2px 8px;" onclick="printCurrentPreviewBill('front')">🖨️ Print Front</button>
+        </div>
+        ${frontHTML}
+      </div>
+
+      <div class="bill-preview-page-card">
+        <div class="bill-preview-page-header">
+          <span class="bill-preview-tag">✂️ Side 2: Tailoring Work Order / Job Card</span>
+          <button class="btn btn-outline btn-sm" style="font-size: 0.72rem; padding: 2px 8px;" onclick="printCurrentPreviewBill('back')">🖨️ Print Tailor Slip</button>
+        </div>
+        ${backHTML}
+      </div>
+    </div>
+  `;
+
+  modal.classList.add('active');
+}
+
+function closeBillPreviewModal() {
+  const modal = document.getElementById('bill-preview-modal');
+  if (modal) modal.classList.remove('active');
+  currentPreviewBill = null;
+}
+
+function printCurrentPreviewBill(side = 'both') {
+  if (!currentPreviewBill) return;
+  printProfessionalBill(currentPreviewBill, side);
 }
 
 function renderSalesChart(bills) {
@@ -1963,18 +2058,21 @@ function openCustomerProfileModal(phone, name) {
 
   if (tbody) {
     if (matchBills.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:15px;color:var(--text-muted);">No purchases recorded for this customer</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:15px;color:var(--text-muted);">No purchases recorded for this customer</td></tr>`;
     } else {
       tbody.innerHTML = matchBills.map(b => `
         <tr>
           <td>${formatDate(b.date)}</td>
           <td>
-            <span class="clickable-bill-no" onclick="openBill('${b.id || b.billNumber}')" title="Click to view/edit bill #KALP-${String(b.billNumber).padStart(4, '0')}">
+            <span class="clickable-bill-no" onclick="openBill('${b.id || b.billNumber}')" title="Preview Bill #KALP-${String(b.billNumber).padStart(4, '0')}">
               #KALP-${String(b.billNumber).padStart(4, '0')}
             </span>
           </td>
           <td>${esc(b.customerName || 'Walk-in')}</td>
           <td style="text-align:right;font-weight:700;">${formatCurrency(b.grandTotal || 0)}</td>
+          <td style="text-align:center;">
+            <button class="btn-icon btn-edit" onclick="closeCustomerProfileModal(); editBill(${b.id})" title="Edit Bill in Editor">📝</button>
+          </td>
         </tr>
       `).join('');
     }
@@ -2003,7 +2101,7 @@ function openPendingDetailsModal() {
   const processedKeys = new Set();
 
   orders.forEach(order => {
-    const total = parseFloat(order.total) || 0;
+    const total = parseFloat(order.total) || ((parseFloat(order.fabric) || 0) + (parseFloat(order.tailor) || 0));
     const advance = parseFloat(order.advance) || 0;
     const pending = parseFloat(order.pending) !== undefined ? parseFloat(order.pending) : (total - advance);
     const fabric = parseFloat(order.fabric) || 0;
@@ -2142,8 +2240,9 @@ function renderPendingOrdersTable(ordersToRender) {
         <td style="text-align:right;color:#15803d;font-weight:600">${formatCurrency(order.advance)}</td>
         <td style="text-align:right;color:#3b82f6;font-weight:600">${formatCurrency(order.fabricPending)}</td>
         <td style="text-align:right;color:#f59e0b;font-weight:600">${formatCurrency(order.tailorPending)}</td>
-        <td style="text-align:center">
-          <button class="btn btn-sm btn-outline" onclick="settlePendingOrder('${order.id || order.billId}', ${order.pending})" title="Quick Settle">✅ Settle</button>
+        <td style="text-align:center; white-space: nowrap;">
+          <button class="btn-icon btn-edit" onclick="closePendingDetailsModal(); editBill('${billTarget}')" title="Edit Bill in Editor" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-right: 4px; vertical-align: middle;">📝</button>
+          <button class="btn btn-sm btn-outline" onclick="settlePendingOrder('${order.id || order.billId}', ${order.pending})" title="Quick Settle" style="vertical-align: middle;">✅ Settle</button>
         </td>
       </tr>
     `;
@@ -2396,14 +2495,14 @@ function openDeliveriesModal() {
         : `<button class="btn btn-outline btn-sm" onclick="toggleDeliveryStatus('${orderKey}', false)">Undo</button>`;
 
       const tailorPaidHtml = `<input type="checkbox" onchange="toggleTailorPaid('${orderKey}', this.checked)" style="transform: scale(1.5); cursor: pointer;" ${d.isTailorPaid ? 'checked' : ''} title="Mark tailor paid">`;
-
       const billDisplayNo = String(d.billNumber || '').replace(/^[^\d]*/, '');
       const billTarget = d.billId || d.billNumber || d.id;
+      const editBtnHtml = `<button class="btn-icon btn-edit" onclick="closeDeliveriesModal(); editBill('${billTarget}')" title="Edit Bill in Editor" style="margin-right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; vertical-align: middle;">📝</button>`;
 
       return `<tr style="${currentDeliveriesTab === 'completed' ? 'opacity: 0.8;' : ''}">
         <td>${dateLabel}</td>
         <td>
-          <span class="clickable-bill-no" onclick="openBill('${billTarget}')" title="Click to view/edit bill #KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : esc(String(d.billNumber))}">
+          <span class="clickable-bill-no" onclick="openBill('${billTarget}')" title="Preview Bill #KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : esc(String(d.billNumber))}">
             #KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : esc(String(d.billNumber))}
           </span>
         </td>
@@ -2413,7 +2512,7 @@ function openDeliveriesModal() {
         </td>
         <td style="text-align: right; font-weight: 600; color: ${d.pending > 0 ? 'var(--danger-color)' : 'var(--success-color)'};">${d.pending <= 0 ? 'Paid' : formatCurrency(d.pending)}</td>
         <td style="text-align: center;">${tailorPaidHtml}</td>
-        <td style="text-align: center;">${actionHtml}</td>
+        <td style="text-align: center; white-space: nowrap;">${editBtnHtml}${actionHtml}</td>
       </tr>`;
     }).join('');
   }
