@@ -5199,33 +5199,104 @@ function importAllData(event) {
   }
 
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const parsedData = JSON.parse(e.target.result);
       const validKeys = Object.values(STORAGE_KEYS);
       let importedKeysCount = 0;
-      
+      const importedData = {};
+
+      // Step 1: Write all valid keys to localStorage
       for (const [key, value] of Object.entries(parsedData)) {
         if (validKeys.includes(key)) {
           localStorage.setItem(key, value);
+          // Also parse and cache the value for Supabase sync below
+          try {
+            importedData[key] = typeof value === 'string' ? JSON.parse(value) : value;
+          } catch {
+            importedData[key] = value;
+          }
           importedKeysCount++;
         }
       }
-      
-      if (importedKeysCount > 0) {
-        alert('Data imported successfully! The application will now reload to apply the backup.');
-        window.location.reload();
-      } else {
+
+      if (importedKeysCount === 0) {
         showToast('Invalid backup file. No matching data keys found.', 'error');
+        event.target.value = '';
+        return;
       }
+
+      showToast(`✅ ${importedKeysCount} data stores imported locally. Syncing to cloud...`, 'info');
+      updateSyncUI('syncing', 'Uploading backup...');
+
+      // Step 2: Push to Supabase if connected
+      if (supabaseClient && navigator.onLine) {
+        try {
+          // 2a. Push bills to dedicated kalp_bills table (for realtime support)
+          const bills = importedData[STORAGE_KEYS.bills];
+          if (Array.isArray(bills) && bills.length > 0) {
+            const BATCH = 50;
+            let billErrors = 0;
+            for (let i = 0; i < bills.length; i += BATCH) {
+              const batch = bills.slice(i, i + BATCH);
+              const rows = batch.map(b => ({
+                id: b.id,
+                bill_number: b.billNumber,
+                customer_name: b.customerName || 'Walk-in Customer',
+                phone: b.phone || '',
+                date: b.date || new Date().toISOString().split('T')[0],
+                grand_total: b.grandTotal || 0,
+                raw_data: b,
+                updated_at: new Date().toISOString()
+              }));
+              const { error } = await supabaseClient.from('kalp_bills').upsert(rows, { onConflict: 'id' });
+              if (error) billErrors++;
+            }
+            const billStatus = billErrors === 0
+              ? `${bills.length} bills synced`
+              : `${bills.length - billErrors * 50} bills synced (${billErrors} batch errors)`;
+            showToast(`☁️ ${billStatus} to cloud`, billErrors === 0 ? 'success' : 'warning');
+          }
+
+          // 2b. Push all other keys to kalp_store
+          const BILLS_KEY = STORAGE_KEYS.bills;
+          const storePromises = Object.entries(importedData)
+            .filter(([key]) => key !== BILLS_KEY)
+            .map(([key, value]) =>
+              supabaseClient
+                .from('kalp_store')
+                .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+            );
+          await Promise.all(storePromises);
+
+          updateSyncUI('synced', 'Cloud Synced');
+          showToast('🎉 Backup fully imported and synced to Supabase!', 'success');
+        } catch (syncErr) {
+          console.error('Cloud sync after import failed:', syncErr);
+          showToast('Data imported locally. Cloud sync failed — try manual sync.', 'warning');
+          updateSyncUI('offline', 'Sync needed');
+        }
+      } else {
+        // Offline — queue everything for later
+        for (const [key, value] of Object.entries(importedData)) {
+          if (key !== STORAGE_KEYS.bills) {
+            addToOfflineQueue(key, value);
+          }
+        }
+        showToast('Data imported locally. Will sync to cloud when online.', 'warning');
+      }
+
+      // Step 3: Reload after short delay so the toast is visible
+      setTimeout(() => window.location.reload(), 1500);
+
     } catch (err) {
       showToast('Error reading backup file: ' + err.message, 'error');
     }
-    // Prevent blocking same file re-selection
     event.target.value = '';
   };
   reader.readAsText(file);
 }
+
 
 // Security function for Order Ledger
 let currentPasscode = "";
