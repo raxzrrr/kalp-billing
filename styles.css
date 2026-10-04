@@ -694,43 +694,64 @@ body {
 /* --- Modal --- */
 .modal-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.3); backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.45); backdrop-filter: blur(4px);
   display: flex; align-items: center; justify-content: center;
-  z-index: 200; opacity: 0; visibility: hidden;
+  z-index: 1000; opacity: 0; visibility: hidden;
   transition: all var(--transition-normal);
+  padding: 16px;
 }
 
 .modal-overlay.active { opacity: 1; visibility: visible; }
 
 .modal {
   background: var(--bg-secondary); border: 1px solid var(--border-color);
-  border-radius: var(--radius-xl); padding: 28px;
+  border-radius: var(--radius-xl); padding: 24px;
   max-width: 500px; width: 90%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
   transform: scale(0.95) translateY(16px);
   transition: transform var(--transition-normal);
   box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
 
 .modal-overlay.active .modal { transform: scale(1) translateY(0); }
 
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .modal-title { font-size: 1.15rem; font-weight: 700; }
 
 .modal-close {
   background: none; border: none; color: var(--text-muted);
-  font-size: 1.4rem; cursor: pointer; padding: 4px;
-  transition: color var(--transition-fast);
+  font-size: 1.5rem; cursor: pointer; padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  line-height: 1;
 }
 
-.modal-close:hover { color: var(--text-primary); }
+.modal-close:hover { color: var(--text-primary); background: var(--bg-input); }
 
-.modal-body { display: flex; flex-direction: column; gap: 14px; }
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
 
-.modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+  flex-shrink: 0;
+}
 
 /* --- Toast Notifications --- */
 .toast-container {

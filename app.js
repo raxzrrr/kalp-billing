@@ -643,35 +643,39 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   const hasLocalBills = (getData(STORAGE_KEYS.bills) || []).length > 0;
 
-  if (supabaseClient && navigator.onLine) {
-    showBoot('Syncing with Supabase…');
-    updateSyncUI('syncing', 'Syncing...');
-    await flushOfflineQueue();
-    const pulled = await pullFromCloud();
-    if (pulled) {
-      updateSyncUI('synced', 'Cloud Synced');
-    } else if (hasLocalBills) {
-      updateSyncUI('synced', 'Local + Cloud');
+  try {
+    if (supabaseClient && navigator.onLine) {
+      showBoot('Syncing with Supabase…');
+      updateSyncUI('syncing', 'Syncing...');
+      const syncTimeout = new Promise(resolve => setTimeout(() => resolve(null), 5000));
+      await Promise.race([flushOfflineQueue(), syncTimeout]);
+      const pulled = await Promise.race([pullFromCloud(), syncTimeout]);
+      if (pulled) {
+        updateSyncUI('synced', 'Cloud Synced');
+      } else if (hasLocalBills) {
+        updateSyncUI('synced', 'Local + Cloud');
+      } else {
+        updateSyncUI('offline', 'Cloud empty / error');
+      }
+    } else if (!navigator.onLine) {
+      updateSyncUI('offline', 'Offline');
+      if (!hasLocalBills) {
+        showToast('Offline mode — using local storage data.', 'info');
+      }
     } else {
-      updateSyncUI('offline', 'Cloud empty / error');
-      showToast('Cloud has no data yet. Import a backup or push seed data.', 'warning');
+      updateSyncUI('offline', 'Not connected');
     }
-  } else if (!navigator.onLine) {
-    updateSyncUI('offline', 'Offline');
-    if (!hasLocalBills) {
-      showToast('Offline and no local data. Connect to the internet once to load from Supabase.', 'warning');
-    }
-  } else {
-    updateSyncUI('offline', 'Not connected');
-    showToast('Supabase not connected. Check Shop Details → Cloud Database Sync.', 'warning');
+  } catch (bootErr) {
+    console.warn('Boot cloud sync exception:', bootErr);
+  } finally {
+    hideBoot();
   }
-
-  hideBoot();
   rebuildLedgerCache();
   seedDefaultStaff(); // Ensure default staff exist
   populateStaffDropdown(); // Populate billing dropdown
   updateStorageMeter();
   handleRoute();
+  initDashboardPrivacy();
 });
 
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -685,6 +689,64 @@ document.querySelectorAll('.nav-item').forEach(item => {
 // DASHBOARD
 // ===================================================================
 
+const PRIVACY_STAT_IDS = ['stat-total-sales', 'stat-today-sales', 'stat-cash-hand', 'stat-bank-balance', 'stat-pending-amount'];
+
+function isDashboardPrivacyOn() {
+  return localStorage.getItem('kalp_privacy_mode') === '1';
+}
+
+function updatePrivacyButtonUI(isBlurred) {
+  const btn = document.getElementById('btn-dashboard-privacy');
+  if (!btn) return;
+  const icon = document.getElementById('privacy-toggle-icon');
+  const label = document.getElementById('privacy-toggle-label');
+  if (isBlurred) {
+    if (icon) icon.textContent = '🔒';
+    if (label) label.textContent = 'Hidden';
+    btn.classList.add('active');
+    btn.title = 'Amounts are currently blurred. Click to reveal all amounts.';
+  } else {
+    if (icon) icon.textContent = '👁️';
+    if (label) label.textContent = 'Privacy';
+    btn.classList.remove('active');
+    btn.title = 'Click to blur sensitive financial figures for privacy.';
+  }
+}
+
+function toggleDashboardPrivacy() {
+  const elements = PRIVACY_STAT_IDS.map(id => document.getElementById(id)).filter(Boolean);
+  const anyVisible = elements.some(el => !el.classList.contains('privacy-blur'));
+  const newBlurState = anyVisible;
+
+  elements.forEach(el => {
+    if (newBlurState) {
+      el.classList.add('privacy-blur');
+      el.classList.remove('privacy-revealed');
+    } else {
+      el.classList.remove('privacy-blur');
+      el.classList.add('privacy-revealed');
+    }
+  });
+
+  localStorage.setItem('kalp_privacy_mode', newBlurState ? '1' : '0');
+  updatePrivacyButtonUI(newBlurState);
+  showToast(newBlurState ? '🔒 Financial figures hidden' : '👁️ Financial figures revealed', 'info');
+}
+
+function initDashboardPrivacy() {
+  const isBlurred = isDashboardPrivacyOn();
+  if (isBlurred) {
+    PRIVACY_STAT_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.classList.add('privacy-blur');
+        el.classList.remove('privacy-revealed');
+      }
+    });
+  }
+  updatePrivacyButtonUI(isBlurred);
+}
+
 function setDashboardStat(id, text) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -693,6 +755,10 @@ function setDashboardStat(id, text) {
     el.classList.add('stat-value-long');
   } else {
     el.classList.remove('stat-value-long');
+  }
+  if (isDashboardPrivacyOn() && PRIVACY_STAT_IDS.includes(id)) {
+    el.classList.add('privacy-blur');
+    el.classList.remove('privacy-revealed');
   }
 }
 
@@ -840,7 +906,10 @@ function refreshDashboard() {
 }
 
 function togglePrivacy(element, event) {
-  if (event) event.stopPropagation();
+  if (event) {
+    event.stopPropagation();
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+  }
   const valueEl = element.classList.contains('stat-value') ? element : element.querySelector('.stat-value');
   if (valueEl) {
     if (valueEl.classList.contains('privacy-blur')) {
@@ -1900,6 +1969,8 @@ function closeCustomerProfileModal() {
   if (modal) modal.classList.remove('active');
 }
 
+let cachedPendingOrders = [];
+
 function openPendingDetailsModal() {
   const modal = document.getElementById('pending-details-modal');
   if (!modal) return;
@@ -1907,6 +1978,7 @@ function openPendingDetailsModal() {
   const orders = getData(STORAGE_KEYS.orders) || [];
   let totalFabricPending = 0;
   let totalTailorPending = 0;
+  let grandTotalPending = 0;
   const pendingOrders = [];
 
   orders.forEach(order => {
@@ -1928,6 +2000,7 @@ function openPendingDetailsModal() {
       }
       totalFabricPending += fabricPending;
       totalTailorPending += tailorPending;
+      grandTotalPending += pending;
       pendingOrders.push({
         ...order,
         total,
@@ -1939,33 +2012,90 @@ function openPendingDetailsModal() {
     }
   });
 
+  cachedPendingOrders = pendingOrders;
+
   const fabEl = document.getElementById('modal-fabric-pending');
   const tailEl = document.getElementById('modal-tailor-pending');
+  const totEl = document.getElementById('modal-total-pending');
+  const countBadge = document.getElementById('pending-modal-count');
+
   if (fabEl) fabEl.textContent = formatCurrency(totalFabricPending);
   if (tailEl) tailEl.textContent = formatCurrency(totalTailorPending);
+  if (totEl) totEl.textContent = formatCurrency(grandTotalPending);
+  if (countBadge) countBadge.textContent = `${pendingOrders.length} Order${pendingOrders.length === 1 ? '' : 's'}`;
 
-  const tbody = document.getElementById('pending-details-tbody');
-  if (tbody) {
-    if (pendingOrders.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted);">🎉 No pending payments! All orders settled.</td></tr>`;
-    } else {
-      tbody.innerHTML = pendingOrders.map(order => `
-        <tr>
-          <td><strong>#KALP-${String(order.billNumber || '').padStart(4, '0')}</strong></td>
-          <td>${esc(order.customerName || 'Walk-in')}</td>
-          <td style="text-align:right">${formatCurrency(order.total)}</td>
-          <td style="text-align:right;color:#15803d">${formatCurrency(order.advance)}</td>
-          <td style="text-align:right;color:#3b82f6;font-weight:600">${formatCurrency(order.fabricPending)}</td>
-          <td style="text-align:right;color:#f59e0b;font-weight:600">${formatCurrency(order.tailorPending)}</td>
-          <td style="text-align:center">
-            <button class="btn btn-sm btn-outline" onclick="settlePendingOrder('${order.id}', ${order.pending})" title="Quick Settle">✅ Settle</button>
-          </td>
-        </tr>
-      `).join('');
-    }
-  }
+  const searchInput = document.getElementById('pending-search-input');
+  if (searchInput) searchInput.value = '';
+
+  renderPendingOrdersTable(pendingOrders);
 
   modal.classList.add('active');
+}
+
+function renderPendingOrdersTable(ordersToRender) {
+  const tbody = document.getElementById('pending-details-tbody');
+  const footerSummary = document.getElementById('pending-footer-summary');
+  if (!tbody) return;
+
+  if (ordersToRender.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);font-weight:600;">🎉 No pending orders found.</td></tr>`;
+    if (footerSummary) footerSummary.textContent = 'Showing 0 orders';
+    return;
+  }
+
+  let totalVisiblePending = 0;
+  tbody.innerHTML = ordersToRender.map(order => {
+    totalVisiblePending += order.pending;
+    return `
+      <tr>
+        <td><strong>#KALP-${String(order.billNumber || '').padStart(4, '0')}</strong></td>
+        <td>
+          <div style="font-weight: 600;">${esc(order.customerName || 'Walk-in')}</div>
+          ${order.phone ? `<div style="font-size:0.75rem;color:var(--text-muted);">${esc(order.phone)}</div>` : ''}
+        </td>
+        <td style="text-align:right">${formatCurrency(order.total)}</td>
+        <td style="text-align:right;color:#15803d;font-weight:600">${formatCurrency(order.advance)}</td>
+        <td style="text-align:right;color:#3b82f6;font-weight:600">${formatCurrency(order.fabricPending)}</td>
+        <td style="text-align:right;color:#f59e0b;font-weight:600">${formatCurrency(order.tailorPending)}</td>
+        <td style="text-align:center">
+          <button class="btn btn-sm btn-outline" onclick="settlePendingOrder('${order.id}', ${order.pending})" title="Quick Settle">✅ Settle</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  if (footerSummary) {
+    footerSummary.textContent = `Showing ${ordersToRender.length} of ${cachedPendingOrders.length} pending orders • Total: ${formatCurrency(totalVisiblePending)}`;
+  }
+}
+
+function filterPendingOrdersTable() {
+  const query = (document.getElementById('pending-search-input')?.value || '').trim().toLowerCase();
+  if (!query) {
+    renderPendingOrdersTable(cachedPendingOrders);
+    return;
+  }
+  const filtered = cachedPendingOrders.filter(order => {
+    const billStr = String(order.billNumber || '');
+    const name = String(order.customerName || '').toLowerCase();
+    const phone = String(order.phone || '').toLowerCase();
+    return billStr.includes(query) || name.includes(query) || phone.includes(query);
+  });
+  renderPendingOrdersTable(filtered);
+}
+
+function togglePendingSummary() {
+  const summaryEl = document.getElementById('pending-summary-cards');
+  const btn = document.getElementById('toggle-pending-summary-btn');
+  if (!summaryEl || !btn) return;
+  const isHidden = summaryEl.style.display === 'none';
+  if (isHidden) {
+    summaryEl.style.display = 'grid';
+    btn.textContent = 'Collapse Summary ▴';
+  } else {
+    summaryEl.style.display = 'none';
+    btn.textContent = 'Expand Summary ▾';
+  }
 }
 
 function closePendingDetailsModal() {
@@ -6337,3 +6467,17 @@ async function generateGSTReport() {
     downloadBtn.disabled = false;
   }
 }
+
+// --- Global Modal Listeners (Escape key & backdrop click) ---
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active'));
+  }
+});
+
+document.addEventListener('click', function(e) {
+  if (e.target && e.target.classList.contains('modal-overlay') && e.target.classList.contains('active')) {
+    e.target.classList.remove('active');
+  }
+});
+

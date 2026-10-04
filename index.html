@@ -121,6 +121,7 @@
           <p class="page-subtitle">Your business at a glance</p>
         </div>
         <div class="page-actions">
+          <button class="btn btn-outline" id="btn-dashboard-privacy" onclick="toggleDashboardPrivacy()" title="Click to blur/unblur sensitive financial figures"><span id="privacy-toggle-icon">👁️</span> <span id="privacy-toggle-label">Privacy</span></button>
           <input type="file" id="app-data-import" accept=".json" style="display:none" onchange="importAllData(event)">
           <button class="btn btn-secondary" onclick="document.getElementById('app-data-import').click()">📤 Import Data</button>
           <button class="btn btn-success" onclick="exportAllData()">📥 Export Data</button>
@@ -1639,30 +1640,51 @@
 </div>
 
 <!-- ===== Pending Details Modal ===== -->
-<div class="modal-overlay" id="pending-details-modal">
-  <div class="modal" style="max-width: 900px; width: 95%;">
+<div class="modal-overlay" id="pending-details-modal" onclick="if(event.target === this) closePendingDetailsModal()">
+  <div class="modal" style="max-width: 960px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;">
     <div class="modal-header">
-      <h3 class="modal-title">⏳ Pending Amounts Details</h3>
-      <button class="modal-close" onclick="closePendingDetailsModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <h3 class="modal-title" style="margin: 0;">⏳ Pending Amounts Details</h3>
+        <span class="badge" id="pending-modal-count" style="background: rgba(239,68,68,0.12); color: #ef4444; font-weight: 700; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem;">0 Orders</span>
+      </div>
+      <button class="modal-close" onclick="closePendingDetailsModal()" title="Close">&times;</button>
     </div>
-    <div class="modal-body" style="padding: 15px;">
-      <div class="stats-grid" style="margin-bottom: 20px;">
-        <div class="stat-card" style="background: rgba(59, 130, 246, 0.05);">
+    <div class="modal-body" style="padding: 10px 0; overflow-y: auto; flex: 1; min-height: 0;">
+      <!-- Summary Cards -->
+      <div class="stats-grid" id="pending-summary-cards" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px;">
+        <div class="stat-card" style="background: rgba(59, 130, 246, 0.05); padding: 14px 16px;">
           <div class="stat-info">
-            <div class="stat-value" id="modal-fabric-pending" style="color: #3b82f6;">₹0</div>
+            <div class="stat-value" id="modal-fabric-pending" style="color: #3b82f6; font-size: 1.25rem;">₹0</div>
             <div class="stat-label">Total Fabric Pending</div>
           </div>
         </div>
-        <div class="stat-card" style="background: rgba(245, 158, 11, 0.05);">
+        <div class="stat-card" style="background: rgba(245, 158, 11, 0.05); padding: 14px 16px;">
           <div class="stat-info">
-            <div class="stat-value" id="modal-tailor-pending" style="color: #f59e0b;">₹0</div>
+            <div class="stat-value" id="modal-tailor-pending" style="color: #f59e0b; font-size: 1.25rem;">₹0</div>
             <div class="stat-label">Total Tailor Pending</div>
           </div>
         </div>
+        <div class="stat-card" style="background: rgba(239, 68, 68, 0.05); padding: 14px 16px;">
+          <div class="stat-info">
+            <div class="stat-value" id="modal-total-pending" style="color: #ef4444; font-size: 1.25rem;">₹0</div>
+            <div class="stat-label">Total Pending Amount</div>
+          </div>
+        </div>
       </div>
-      <div class="table-container">
-        <table class="data-table">
-          <thead>
+
+      <!-- Search & Controls Bar -->
+      <div style="display: flex; gap: 10px; margin-bottom: 12px; align-items: center; justify-content: space-between;">
+        <div class="search-bar" style="flex: 1; max-width: 350px; margin-bottom: 0;">
+          <span class="search-icon">🔍</span>
+          <input type="text" class="form-input input-sm" id="pending-search-input" placeholder="Search by customer, phone, bill #..." oninput="filterPendingOrdersTable()">
+        </div>
+        <button class="btn btn-outline btn-sm" id="toggle-pending-summary-btn" onclick="togglePendingSummary()">Collapse Summary ▴</button>
+      </div>
+
+      <!-- Scrollable Table -->
+      <div class="table-container" style="max-height: 48vh; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-md);">
+        <table class="data-table" id="pending-details-table">
+          <thead style="position: sticky; top: 0; z-index: 5; background: var(--bg-secondary);">
             <tr>
               <th>Bill #</th>
               <th>Customer</th>
@@ -1679,8 +1701,9 @@
         </table>
       </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closePendingDetailsModal()">Close</button>
+    <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 12px;">
+      <span class="text-muted" style="font-size: 0.82rem;" id="pending-footer-summary"></span>
+      <button class="btn btn-secondary" onclick="closePendingDetailsModal()">Close</button>
     </div>
   </div>
 </div>
