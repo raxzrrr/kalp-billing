@@ -685,6 +685,17 @@ document.querySelectorAll('.nav-item').forEach(item => {
 // DASHBOARD
 // ===================================================================
 
+function setDashboardStat(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  if (String(text).length > 11) {
+    el.classList.add('stat-value-long');
+  } else {
+    el.classList.remove('stat-value-long');
+  }
+}
+
 let currentDashboardRange = 7;
 
 function updateDashboardRange(days) {
@@ -795,12 +806,13 @@ function refreshDashboard() {
     }
   }
 
+
   // Update DOM
-  document.getElementById('stat-total-sales').textContent = formatCurrency(totalSales);
-  document.getElementById('stat-today-sales').textContent = formatCurrency(todaySales);
-  document.getElementById('stat-total-bills').textContent = bills.length;
-  document.getElementById('stat-cash-hand').textContent = formatCurrency(cashTotal);
-  document.getElementById('stat-bank-balance').textContent = formatCurrency(bankTotal);
+  setDashboardStat('stat-total-sales', formatCurrency(totalSales));
+  setDashboardStat('stat-today-sales', formatCurrency(todaySales));
+  setDashboardStat('stat-total-bills', bills.length);
+  setDashboardStat('stat-cash-hand', formatCurrency(cashTotal));
+  setDashboardStat('stat-bank-balance', formatCurrency(bankTotal));
   
   // Pending orders
   const orders = getData(STORAGE_KEYS.orders) || [];
@@ -809,11 +821,10 @@ function refreshDashboard() {
     const p = parseFloat(o.pending) || 0;
     if (p > 0) totalPendingOrders += p;
   });
-  const pendingStatEl = document.getElementById('stat-pending-amount');
-  if (pendingStatEl) pendingStatEl.textContent = formatCurrency(totalPendingOrders);
+  setDashboardStat('stat-pending-amount', formatCurrency(totalPendingOrders));
 
   const customersEl = document.getElementById('stat-total-customers');
-  if (customersEl) customersEl.textContent = uniqueCustomers.size;
+  if (customersEl) setDashboardStat('stat-total-customers', uniqueCustomers.size);
 
   renderRecentBills(bills);
   updateDeliveriesDashboard();

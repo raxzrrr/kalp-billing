@@ -374,16 +374,25 @@ body {
 
 /* --- Stat Cards --- */
 .stats-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 18px; margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
 }
 
 .stat-card {
-  background: var(--bg-card); border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg); padding: 20px 22px;
-  display: flex; align-items: center; gap: 16px;
-  transition: all var(--transition-normal); position: relative; overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all var(--transition-normal);
+  position: relative;
+  overflow: hidden;
   box-shadow: var(--shadow-sm);
+  min-width: 0;
 }
 
 .stat-card::before {
@@ -399,9 +408,15 @@ body {
 .stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 
 .stat-icon {
-  width: 48px; height: 48px; border-radius: var(--radius-md);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 1.3rem; flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  flex-shrink: 0;
 }
 
 .stat-sales .stat-icon { background: var(--accent-light); color: var(--accent-primary); }
@@ -409,11 +424,61 @@ body {
 .stat-bills .stat-icon { background: var(--info-bg); color: var(--info); }
 .stat-pending .stat-icon { background: var(--warning-bg); color: var(--warning); }
 
-.stat-info { flex: 1; }
-.stat-value { font-size: 1.5rem; font-weight: 800; line-height: 1.2; }
+.stat-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.stat-value {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.2;
+  margin: 3px 0 2px 0;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.3px;
+  transition: filter 0.3s ease;
+}
+
+.stat-value.stat-value-long {
+  font-size: 1.18rem;
+  letter-spacing: -0.5px;
+}
+
 .stat-label {
-  font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;
-  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1440px) {
+  .stat-card {
+    padding: 14px 14px;
+    gap: 10px;
+  }
+  .stat-icon {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    font-size: 1.15rem;
+  }
+  .stat-value {
+    font-size: 1.22rem;
+    letter-spacing: -0.4px;
+  }
+  .stat-value.stat-value-long {
+    font-size: 1.08rem;
+    letter-spacing: -0.5px;
+  }
 }
 
 /* --- Tables --- */
@@ -824,6 +889,10 @@ body {
   .stats-grid { grid-template-columns: 1fr 1fr; }
 }
 
+@media (max-width: 480px) {
+  .stats-grid { grid-template-columns: 1fr; }
+}
+
 /* --- Print Styles (Bills) --- */
 @media print {
   * { color: #000 !important; background: #fff !important; box-shadow: none !important; border-color: #ddd !important; }
@@ -1078,14 +1147,7 @@ body.printing-bill #bill-professional-print {
   font-family: 'Outfit', sans-serif;
 }
 
-/* Dashboard Stats */
-.stat-value {
-  font-size: 1.8rem;
-  font-weight: 800;
-  margin: 5px 0;
-  color: var(--text-primary);
-  transition: filter 0.3s ease;
-}
+
 
 .privacy-blur {
   filter: blur(8px);
