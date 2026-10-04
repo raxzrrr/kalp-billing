@@ -1074,7 +1074,11 @@ function renderRecentBills(bills, filter = '') {
     const cls = bill.totalPending > 0 ? 'badge-warning' : 'badge-success';
     const txt = bill.totalPending > 0 ? 'Pending' : 'Paid';
     return `<tr>
-      <td style="font-weight:600;color:var(--text-accent)">#${bill.billNumber}</td>
+      <td>
+        <span class="clickable-bill-no" onclick="openBill('${bill.id}')" title="Click to view/edit bill #${bill.billNumber}">
+          #${bill.billNumber}
+        </span>
+      </td>
       <td>${esc(bill.customerName || 'Walk-in')}</td>
       <td>${formatDate(bill.date)}</td>
       <td style="font-weight:600">${formatCurrency(bill.grandTotal)}</td>
@@ -1375,11 +1379,17 @@ function deleteBill(id) {
   }
 }
 
-function editBill(id) {
-  const bills = getData(STORAGE_KEYS.bills);
-  const bill = bills.find(b => b.id === id);
+function editBill(idOrBill) {
+  const bills = getData(STORAGE_KEYS.bills) || [];
+  let bill;
+  if (typeof idOrBill === 'object' && idOrBill !== null) {
+    bill = idOrBill;
+  } else {
+    bill = bills.find(b => b.id === idOrBill || b.id == idOrBill || b.billNumber == idOrBill || String(b.billNumber) === String(idOrBill));
+  }
   if (!bill) return;
 
+  const id = bill.id;
   editingBillId = id;
   isManualTotalOverride = false;
 
@@ -1513,15 +1523,15 @@ function openBill(identifier) {
   const bills = getData(STORAGE_KEYS.bills) || [];
   const cleanId = String(identifier).trim();
 
-  // 1. Try finding in active bills by id
-  let bill = bills.find(b => b.id === identifier || String(b.id) === cleanId);
+  // 1. Try finding in active bills by id (number or string)
+  let bill = bills.find(b => b.id === identifier || String(b.id) === cleanId || b.id == identifier);
 
   // 2. Try by billNumber (numeric or string)
   if (!bill) {
     let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
     let num = parseInt(numStr, 10);
-    if (!isNaN(num)) bill = bills.find(b => Number(b.billNumber) === num);
-    if (!bill) bill = bills.find(b => String(b.billNumber) === numStr);
+    if (!isNaN(num)) bill = bills.find(b => Number(b.billNumber) === num || b.billNumber == num);
+    if (!bill) bill = bills.find(b => String(b.billNumber) === numStr || String(b.billNumber) === cleanId);
   }
 
   // 3. Fallback: Check Order Ledger
@@ -1530,8 +1540,8 @@ function openBill(identifier) {
     let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
     let num = parseInt(numStr, 10);
     let order = orders.find(o =>
-      o.id === identifier || String(o.id) === cleanId ||
-      (o.billId && String(o.billId) === cleanId)
+      o.id === identifier || String(o.id) === cleanId || o.id == identifier ||
+      (o.billId && (o.billId === identifier || String(o.billId) === cleanId || o.billId == identifier))
     );
     if (!order && !isNaN(num)) {
       order = orders.find(o =>
@@ -1539,36 +1549,41 @@ function openBill(identifier) {
         (String(o.billNumber).replace(/\D/g, '') === String(num))
       );
     }
-    if (!order) order = orders.find(o => String(o.billNumber) === numStr);
+    if (!order) order = orders.find(o => String(o.billNumber) === numStr || String(o.billNumber) === cleanId);
     if (order) {
-      const bNo = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || num || 1;
-      bill = {
-        id: order.billId || order.id || Date.now(),
-        billNumber: bNo,
-        customerName: order.customerName || '',
-        phone: order.phone || '',
-        date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
-        tailorAmount: order.tailor || 0,
-        advancePaid: order.advance || 0,
-        deliveryDate: order.deliveryDate || '',
-        noDelivery: !order.deliveryDate,
-        orderNumber: order.orderNumber || '',
-        items: [{ itemName: 'Fabric Charges', qty: '1', price: String(order.fabric || order.total || 0), total: parseFloat(order.fabric || order.total || 0) }],
-        grandTotal: parseFloat(order.fabric || order.total || 0),
-        subtotal: parseFloat(order.fabric || order.total || 0),
-        gstMode: 'including'
-      };
+      if (order.billId) {
+        bill = bills.find(b => b.id == order.billId || String(b.id) === String(order.billId));
+      }
+      if (!bill) {
+        const bNo = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || num || 1;
+        bill = {
+          id: order.billId || order.id || Date.now(),
+          billNumber: bNo,
+          customerName: order.customerName || 'Walk-in Customer',
+          phone: order.phone || '',
+          date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
+          tailorAmount: order.tailor || 0,
+          advancePaid: order.advance || 0,
+          deliveryDate: order.deliveryDate || '',
+          noDelivery: !order.deliveryDate,
+          orderNumber: order.orderNumber || '',
+          items: [{ itemName: 'Fabric Charges', qty: '1', price: String(order.fabric || order.total || 0), total: parseFloat(order.fabric || order.total || 0) }],
+          grandTotal: parseFloat(order.fabric || order.total || 0),
+          subtotal: parseFloat(order.fabric || order.total || 0),
+          gstMode: 'including'
+        };
+      }
     }
   }
 
   if (bill) {
-    editBill(bill.id || bill.billNumber);
+    editBill(bill);
     return;
   }
 
   // 4. Check deleted bills
   const deletedBills = getData(STORAGE_KEYS.deletedBills) || [];
-  let delBill = deletedBills.find(b => b.id === identifier || String(b.id) === cleanId);
+  let delBill = deletedBills.find(b => b.id === identifier || String(b.id) === cleanId || b.id == identifier);
   if (!delBill) {
     let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
     let num = parseInt(numStr, 10);
@@ -1953,7 +1968,11 @@ function openCustomerProfileModal(phone, name) {
       tbody.innerHTML = matchBills.map(b => `
         <tr>
           <td>${formatDate(b.date)}</td>
-          <td><strong>#KALP-${String(b.billNumber).padStart(4, '0')}</strong></td>
+          <td>
+            <span class="clickable-bill-no" onclick="openBill('${b.id || b.billNumber}')" title="Click to view/edit bill #KALP-${String(b.billNumber).padStart(4, '0')}">
+              #KALP-${String(b.billNumber).padStart(4, '0')}
+            </span>
+          </td>
           <td>${esc(b.customerName || 'Walk-in')}</td>
           <td style="text-align:right;font-weight:700;">${formatCurrency(b.grandTotal || 0)}</td>
         </tr>
@@ -1976,10 +1995,12 @@ function openPendingDetailsModal() {
   if (!modal) return;
 
   const orders = getData(STORAGE_KEYS.orders) || [];
+  const bills = getData(STORAGE_KEYS.bills) || [];
   let totalFabricPending = 0;
   let totalTailorPending = 0;
   let grandTotalPending = 0;
   const pendingOrders = [];
+  const processedKeys = new Set();
 
   orders.forEach(order => {
     const total = parseFloat(order.total) || 0;
@@ -2001,14 +2022,72 @@ function openPendingDetailsModal() {
       totalFabricPending += fabricPending;
       totalTailorPending += tailorPending;
       grandTotalPending += pending;
+
+      // Find matching bill to ensure customerName and phone are accurate
+      const bill = bills.find(b => 
+        (order.billId && b.id == order.billId) || 
+        (order.billNumber && b.billNumber && String(b.billNumber) === String(order.billNumber).replace(/\D/g, ''))
+      );
+
+      const resolvedName = (order.customerName && order.customerName !== 'Walk-in' && order.customerName !== 'Walk-in Customer')
+        ? order.customerName 
+        : (bill && bill.customerName ? bill.customerName : (order.customerName || 'Walk-in Customer'));
+
+      const resolvedPhone = order.phone || (bill ? bill.phone : '');
+
+      if (order.billId) processedKeys.add(String(order.billId));
+      if (order.billNumber) processedKeys.add(String(order.billNumber));
+
       pendingOrders.push({
         ...order,
+        customerName: resolvedName,
+        phone: resolvedPhone,
         total,
         advance,
         pending,
         fabricPending,
         tailorPending
       });
+    }
+  });
+
+  // Also check if any bill has pending amount that was not in orders
+  bills.forEach(bill => {
+    const bId = String(bill.id);
+    const bNum = String(bill.billNumber);
+    if (!processedKeys.has(bId) && !processedKeys.has(bNum)) {
+      const bTotal = (parseFloat(bill.grandTotal) || 0) + (parseFloat(bill.tailorAmount) || 0);
+      const bAdv = parseFloat(bill.advancePaid) || 0;
+      const bPend = parseFloat(bill.totalPending) !== undefined && bill.totalPending !== null ? parseFloat(bill.totalPending) : (bTotal - bAdv);
+      if (bPend > 0.01) {
+        const fabric = parseFloat(bill.grandTotal) || 0;
+        const tailor = parseFloat(bill.tailorAmount) || 0;
+        let fabricPending = 0;
+        let tailorPending = 0;
+        if (bAdv <= fabric) {
+          fabricPending = fabric - bAdv;
+          tailorPending = tailor;
+        } else {
+          fabricPending = 0;
+          tailorPending = Math.max(0, (fabric + tailor) - bAdv);
+        }
+        totalFabricPending += fabricPending;
+        totalTailorPending += tailorPending;
+        grandTotalPending += bPend;
+
+        pendingOrders.push({
+          id: bill.id,
+          billId: bill.id,
+          billNumber: bill.billNumber,
+          customerName: bill.customerName || 'Walk-in Customer',
+          phone: bill.phone || '',
+          total: bTotal,
+          advance: bAdv,
+          pending: bPend,
+          fabricPending,
+          tailorPending
+        });
+      }
     }
   });
 
@@ -2046,19 +2125,25 @@ function renderPendingOrdersTable(ordersToRender) {
   let totalVisiblePending = 0;
   tbody.innerHTML = ordersToRender.map(order => {
     totalVisiblePending += order.pending;
+    const billDisplayNo = String(order.billNumber || '').replace(/^[^\d]*/, '');
+    const billTarget = order.billId || order.billNumber || order.id;
     return `
       <tr>
-        <td><strong>#KALP-${String(order.billNumber || '').padStart(4, '0')}</strong></td>
         <td>
-          <div style="font-weight: 600;">${esc(order.customerName || 'Walk-in')}</div>
-          ${order.phone ? `<div style="font-size:0.75rem;color:var(--text-muted);">${esc(order.phone)}</div>` : ''}
+          <span class="clickable-bill-no" onclick="openBill('${billTarget}')" title="Click to view/edit bill #KALP-${billDisplayNo.padStart(4, '0')}">
+            #KALP-${billDisplayNo.padStart(4, '0')}
+          </span>
+        </td>
+        <td>
+          <div style="font-weight: 600; color: var(--text-primary);">${esc(order.customerName || 'Walk-in Customer')}</div>
+          ${order.phone ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">📞 ${esc(order.phone)}</div>` : ''}
         </td>
         <td style="text-align:right">${formatCurrency(order.total)}</td>
         <td style="text-align:right;color:#15803d;font-weight:600">${formatCurrency(order.advance)}</td>
         <td style="text-align:right;color:#3b82f6;font-weight:600">${formatCurrency(order.fabricPending)}</td>
         <td style="text-align:right;color:#f59e0b;font-weight:600">${formatCurrency(order.tailorPending)}</td>
         <td style="text-align:center">
-          <button class="btn btn-sm btn-outline" onclick="settlePendingOrder('${order.id}', ${order.pending})" title="Quick Settle">✅ Settle</button>
+          <button class="btn btn-sm btn-outline" onclick="settlePendingOrder('${order.id || order.billId}', ${order.pending})" title="Quick Settle">✅ Settle</button>
         </td>
       </tr>
     `;
@@ -2106,20 +2191,24 @@ function closePendingDetailsModal() {
 function settlePendingOrder(orderId, currentPending) {
   if (!confirm(`Mark this order as fully settled (₹${(parseFloat(currentPending) || 0).toFixed(2)})?`)) return;
   const orders = getData(STORAGE_KEYS.orders) || [];
-  const order = orders.find(o => String(o.id) === String(orderId));
-  if (!order) return;
-
-  order.advance = order.total;
-  order.pending = 0;
-  setData(STORAGE_KEYS.orders, orders);
-
   const bills = getData(STORAGE_KEYS.bills) || [];
-  const bill = bills.find(b => b.id === order.billId || String(b.billNumber) === String(order.billNumber));
+  let updated = false;
+
+  const orderIndex = orders.findIndex(o => String(o.id) === String(orderId) || String(o.billId) === String(orderId));
+  if (orderIndex > -1) {
+    orders[orderIndex].advance = orders[orderIndex].total;
+    orders[orderIndex].pending = 0;
+    setData(STORAGE_KEYS.orders, orders);
+    updated = true;
+  }
+
+  const bill = bills.find(b => String(b.id) === String(orderId) || (orderIndex > -1 && String(b.id) === String(orders[orderIndex].billId)) || (orderIndex > -1 && String(b.billNumber) === String(orders[orderIndex].billNumber)));
   if (bill) {
     bill.advancePaid = (parseFloat(bill.grandTotal) || 0) + (parseFloat(bill.tailorAmount) || 0);
     bill.totalPending = 0;
     setData(STORAGE_KEYS.bills, bills);
     saveSingleBillToCloud(bill);
+    updated = true;
   }
 
   showToast('Order marked as settled!', 'success');
@@ -2159,12 +2248,26 @@ function exportCustomersCSV() {
 
 // --- Deliveries Dashboard & Modal ---
 function updateDeliveriesDashboard() {
-  const orders = getData(STORAGE_KEYS.orders);
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  const bills = getData(STORAGE_KEYS.bills) || [];
   let pendingCount = 0;
+  const processedKeys = new Set();
   
   orders.forEach(o => {
     if (o.deliveryDate && String(o.deliveryDate).trim() !== '' && !o.isDelivered) {
       pendingCount++;
+    }
+    if (o.billId) processedKeys.add(String(o.billId));
+    if (o.billNumber) processedKeys.add(String(o.billNumber));
+  });
+
+  bills.forEach(b => {
+    const bId = String(b.id);
+    const bNum = String(b.billNumber);
+    if (!processedKeys.has(bId) && !processedKeys.has(bNum)) {
+      if (b.deliveryDate && String(b.deliveryDate).trim() !== '' && !b.noDelivery && !b.isDelivered) {
+        pendingCount++;
+      }
     }
   });
   
@@ -2190,17 +2293,73 @@ function switchDeliveriesTab(tab) {
 }
 
 function openDeliveriesModal() {
-  const orders = getData(STORAGE_KEYS.orders);
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  const bills = getData(STORAGE_KEYS.bills) || [];
   const today = new Date().toISOString().split('T')[0];
   const body = document.getElementById('deliveries-table-body');
+  if (!body) return;
   
+  const processedKeys = new Set();
+  const allDeliveries = [];
+
+  orders.forEach(o => {
+    if (o.deliveryDate && String(o.deliveryDate).trim() !== '') {
+      const bill = bills.find(b => 
+        (o.billId && b.id == o.billId) || 
+        (o.billNumber && b.billNumber && String(b.billNumber) === String(o.billNumber).replace(/\D/g, ''))
+      );
+      const customerName = (o.customerName && o.customerName !== 'Walk-in' && o.customerName !== 'Walk-in Customer')
+        ? o.customerName 
+        : (bill && bill.customerName ? bill.customerName : (o.customerName || 'Walk-in Customer'));
+      const phone = o.phone || (bill ? bill.phone : '');
+
+      if (o.billId) processedKeys.add(String(o.billId));
+      if (o.billNumber) processedKeys.add(String(o.billNumber));
+
+      allDeliveries.push({
+        id: o.id,
+        billId: o.billId || (bill ? bill.id : o.id),
+        billNumber: o.billNumber,
+        customerName: customerName,
+        phone: phone,
+        deliveryDate: o.deliveryDate,
+        pending: parseFloat(o.pending) !== undefined ? parseFloat(o.pending) : ((parseFloat(o.total)||0) - (parseFloat(o.advance)||0)),
+        isDelivered: !!o.isDelivered,
+        isTailorPaid: !!o.isTailorPaid
+      });
+    }
+  });
+
+  bills.forEach(b => {
+    const bId = String(b.id);
+    const bNum = String(b.billNumber);
+    if (!processedKeys.has(bId) && !processedKeys.has(bNum)) {
+      if (b.deliveryDate && String(b.deliveryDate).trim() !== '' && !b.noDelivery) {
+        const bTotal = (parseFloat(b.grandTotal) || 0) + (parseFloat(b.tailorAmount) || 0);
+        const bAdv = parseFloat(b.advancePaid) || 0;
+        const bPend = parseFloat(b.totalPending) !== undefined && b.totalPending !== null ? parseFloat(b.totalPending) : (bTotal - bAdv);
+        allDeliveries.push({
+          id: b.id,
+          billId: b.id,
+          billNumber: b.billNumber,
+          customerName: b.customerName || 'Walk-in Customer',
+          phone: b.phone || '',
+          deliveryDate: b.deliveryDate,
+          pending: bPend,
+          isDelivered: !!b.isDelivered,
+          isTailorPaid: false
+        });
+      }
+    }
+  });
+
   // Filter based on active tab
   let deliveries = [];
   if (currentDeliveriesTab === 'pending') {
-    deliveries = orders.filter(o => o.deliveryDate && String(o.deliveryDate).trim() !== '' && !o.isDelivered);
+    deliveries = allDeliveries.filter(o => !o.isDelivered);
     deliveries.sort((a, b) => new Date(a.deliveryDate) - new Date(b.deliveryDate));
   } else {
-    deliveries = orders.filter(o => o.deliveryDate && String(o.deliveryDate).trim() !== '' && o.isDelivered);
+    deliveries = allDeliveries.filter(o => o.isDelivered);
     deliveries.sort((a, b) => new Date(b.deliveryDate) - new Date(a.deliveryDate)); // closest past date first
   }
   
@@ -2231,16 +2390,27 @@ function openDeliveriesModal() {
         dateLabel = `<span style="color:var(--text-muted);">${dateLabel}</span>`;
       }
 
+      const orderKey = String(d.id || d.billId);
       const actionHtml = currentDeliveriesTab === 'pending' 
-        ? `<input type="checkbox" onchange="toggleDeliveryStatus('${d.billId}', this.checked)" style="transform: scale(1.5); cursor: pointer;">`
-        : `<button class="btn btn-outline btn-sm" onclick="toggleDeliveryStatus('${d.billId}', false)">Undo</button>`;
+        ? `<input type="checkbox" onchange="toggleDeliveryStatus('${orderKey}', this.checked)" style="transform: scale(1.5); cursor: pointer;" title="Mark delivered">`
+        : `<button class="btn btn-outline btn-sm" onclick="toggleDeliveryStatus('${orderKey}', false)">Undo</button>`;
 
-      const tailorPaidHtml = `<input type="checkbox" onchange="toggleTailorPaid('${d.billId}', this.checked)" style="transform: scale(1.5); cursor: pointer;" ${d.isTailorPaid ? 'checked' : ''}>`;
+      const tailorPaidHtml = `<input type="checkbox" onchange="toggleTailorPaid('${orderKey}', this.checked)" style="transform: scale(1.5); cursor: pointer;" ${d.isTailorPaid ? 'checked' : ''} title="Mark tailor paid">`;
+
+      const billDisplayNo = String(d.billNumber || '').replace(/^[^\d]*/, '');
+      const billTarget = d.billId || d.billNumber || d.id;
 
       return `<tr style="${currentDeliveriesTab === 'completed' ? 'opacity: 0.8;' : ''}">
         <td>${dateLabel}</td>
-        <td style="font-weight:600; color:var(--text-accent);">#${esc(String(d.billNumber))}</td>
-        <td>${esc(d.customerName)}</td>
+        <td>
+          <span class="clickable-bill-no" onclick="openBill('${billTarget}')" title="Click to view/edit bill #KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : esc(String(d.billNumber))}">
+            #KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : esc(String(d.billNumber))}
+          </span>
+        </td>
+        <td>
+          <div style="font-weight: 600; color: var(--text-primary);">${esc(d.customerName || 'Walk-in Customer')}</div>
+          ${d.phone ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">📞 ${esc(d.phone)}</div>` : ''}
+        </td>
         <td style="text-align: right; font-weight: 600; color: ${d.pending > 0 ? 'var(--danger-color)' : 'var(--success-color)'};">${d.pending <= 0 ? 'Paid' : formatCurrency(d.pending)}</td>
         <td style="text-align: center;">${tailorPaidHtml}</td>
         <td style="text-align: center;">${actionHtml}</td>
@@ -2251,24 +2421,43 @@ function openDeliveriesModal() {
   document.getElementById('deliveries-modal').classList.add('active');
 }
 
-function toggleTailorPaid(billId, isPaid) {
-  const orders = getData(STORAGE_KEYS.orders);
-  const orderIndex = orders.findIndex(o => o.billId == billId);
+function toggleTailorPaid(orderIdOrBillId, isPaid) {
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  const orderIndex = orders.findIndex(o => String(o.id) === String(orderIdOrBillId) || String(o.billId) === String(orderIdOrBillId));
   if (orderIndex > -1) {
     orders[orderIndex].isTailorPaid = isPaid;
     setData(STORAGE_KEYS.orders, orders);
+    if (typeof renderOrdersTable === 'function') renderOrdersTable();
     showToast(isPaid ? 'Tailor amount marked as paid' : 'Tailor amount marked as unpaid', 'success');
   }
 }
 
-function toggleDeliveryStatus(billId, isDelivered) {
-  const orders = getData(STORAGE_KEYS.orders);
-  const orderIndex = orders.findIndex(o => o.billId == billId);
+function toggleDeliveryStatus(orderIdOrBillId, isDelivered) {
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  const bills = getData(STORAGE_KEYS.bills) || [];
+  let updatedOrder = false;
+  let updatedBill = false;
+
+  const orderIndex = orders.findIndex(o => String(o.id) === String(orderIdOrBillId) || String(o.billId) === String(orderIdOrBillId));
   if (orderIndex > -1) {
     orders[orderIndex].isDelivered = isDelivered;
     setData(STORAGE_KEYS.orders, orders);
+    updatedOrder = true;
+  }
+
+  // Also sync to bill if applicable
+  const billIndex = bills.findIndex(b => String(b.id) === String(orderIdOrBillId) || (orderIndex > -1 && String(b.id) === String(orders[orderIndex].billId)));
+  if (billIndex > -1) {
+    bills[billIndex].isDelivered = isDelivered;
+    setData(STORAGE_KEYS.bills, bills);
+    saveSingleBillToCloud(bills[billIndex]);
+    updatedBill = true;
+  }
+
+  if (updatedOrder || updatedBill) {
     updateDeliveriesDashboard();
     openDeliveriesModal(); // Refresh modal
+    if (typeof renderOrdersTable === 'function') renderOrdersTable();
     showToast(isDelivered ? 'Marked as Delivered!' : 'Moved back to Pending', 'success');
   }
 }
@@ -3249,8 +3438,8 @@ function saveAndPrintBill(printSide = 'both') {
       });
 
       // Sync with Order Ledger
-      const orders = getData(STORAGE_KEYS.orders);
-      let orderIdx = orders.findIndex(o => o.billId === editingBillId);
+      const orders = getData(STORAGE_KEYS.orders) || [];
+      let orderIdx = orders.findIndex(o => o.billId === editingBillId || o.billId == editingBillId);
       if (orderIdx === -1) {
         orderIdx = orders.findIndex(o => o.billNumber == oldBill.billNumber || o.billNumber == ("KALP-" + oldBill.billNumber));
       }
@@ -3259,6 +3448,7 @@ function saveAndPrintBill(printSide = 'both') {
         orders[orderIdx].billId = bills[index].id; 
         orders[orderIdx].billNumber = bills[index].billNumber;
         orders[orderIdx].customerName = bills[index].customerName;
+        orders[orderIdx].phone = bills[index].phone || '';
         orders[orderIdx].deliveryDate = noDelivery ? '' : deliveryDateInput;
         orders[orderIdx].tailor = tailorAmountNum;
         orders[orderIdx].fabric = parseFloat(bills[index].grandTotal) || 0;
@@ -3268,8 +3458,25 @@ function saveAndPrintBill(printSide = 'both') {
         if (orderNumber) orders[orderIdx].orderNumber = orderNumber;
         
         setData(STORAGE_KEYS.orders, orders);
-        if (typeof renderOrdersTable === 'function') renderOrdersTable();
+      } else {
+        orders.push({
+          id: Date.now() + Math.random(),
+          billId: bills[index].id,
+          billNumber: bills[index].billNumber,
+          customerName: bills[index].customerName,
+          phone: bills[index].phone || '',
+          deliveryDate: noDelivery ? '' : deliveryDateInput,
+          fabric: parseFloat(bills[index].grandTotal) || 0,
+          tailor: tailorAmountNum,
+          advance: advancePaid,
+          total: totalObligation,
+          pending: totalPending,
+          orderNumber: orderNumber || ''
+        });
+        setData(STORAGE_KEYS.orders, orders);
       }
+      if (typeof renderOrdersTable === 'function') renderOrdersTable();
+      updateDeliveriesDashboard();
 
       showToast(`Bill #KALP-${String(oldBill.billNumber).padStart(4, '0')} updated!`, 'success');
       printProfessionalBill(bills[index], printSide);
@@ -3337,13 +3544,14 @@ function saveAndPrintBill(printSide = 'both') {
     });
 
     // Create entry in Order Ledger
-    const orders = getData(STORAGE_KEYS.orders);
+    const orders = getData(STORAGE_KEYS.orders) || [];
     orders.push({
       id: Date.now() + Math.random(),
       billId: bill.id,
       billNumber: bill.billNumber,
       orderNumber: orderNumber || '',
       customerName: bill.customerName,
+      phone: bill.phone || '',
       fabric: bill.grandTotal,
       tailor: tailorAmountNum,
       deliveryDate: noDelivery ? '' : deliveryDateInput,
@@ -3353,6 +3561,7 @@ function saveAndPrintBill(printSide = 'both') {
     });
     setData(STORAGE_KEYS.orders, orders);
     if (typeof renderOrdersTable === 'function') renderOrdersTable();
+    updateDeliveriesDashboard();
 
     showToast(`Bill #KALP-${String(finalBillNumber).padStart(4, '0')} saved!`, 'success');
     printProfessionalBill(bill, printSide);
@@ -4858,8 +5067,14 @@ function renderOrdersTable(filter = '') {
   });
 
   body.innerHTML = sortedOrders.map(order => {
+    const hasLinkedBill = order.billNumber && order.billNumber !== 'Manual';
     return `<tr>
-      <td><input type="text" class="form-input input-sm order-nav-input" style="background:#fff;" value="${order.billNumber || ''}" oninput="updateOrderField(${order.id}, 'billNumber', this.value)"></td>
+      <td>
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <input type="text" class="form-input input-sm order-nav-input" style="background:#fff; flex: 1;" value="${order.billNumber || ''}" oninput="updateOrderField(${order.id}, 'billNumber', this.value)">
+          ${hasLinkedBill ? `<button type="button" class="btn-icon" style="font-size:0.8rem; padding:2px 4px; cursor:pointer; opacity:0.8;" onclick="openBill('${order.billId || order.billNumber || order.id}')" title="Open Bill #${order.billNumber}">🔗</button>` : ''}
+        </div>
+      </td>
       <td><input type="text" class="form-input input-sm order-nav-input" style="background:#fff;" value="${esc(order.customerName)}" oninput="updateOrderField(${order.id}, 'customerName', this.value)"></td>
       <td><input type="number" class="form-input input-sm order-nav-input" style="background:#fff;" value="${order.fabric || ''}" oninput="updateOrderField(${order.id}, 'fabric', this.value)"></td>
       <td><input type="number" class="form-input input-sm order-nav-input" style="background:#fff;" value="${order.tailor || ''}" oninput="updateOrderField(${order.id}, 'tailor', this.value)"></td>
@@ -4909,7 +5124,7 @@ function renderOrdersFooter(orders) {
 }
 
 function updateOrderField(id, field, value) {
-  const orders = getData(STORAGE_KEYS.orders);
+  const orders = getData(STORAGE_KEYS.orders) || [];
   const index = orders.findIndex(o => o.id === id);
   if (index === -1) return;
 
@@ -4945,6 +5160,19 @@ function updateOrderField(id, field, value) {
   setData(STORAGE_KEYS.orders, orders);
   renderOrdersFooter(orders);
   renderTailorSummary();
+  updateDeliveriesDashboard();
+
+  // If order is linked to a bill, sync changed fields to the bill
+  if (order.billId) {
+    const bills = getData(STORAGE_KEYS.bills) || [];
+    const billIdx = bills.findIndex(b => b.id === order.billId || b.id == order.billId);
+    if (billIdx > -1) {
+      if (field === 'deliveryDate') bills[billIdx].deliveryDate = value;
+      if (field === 'customerName') bills[billIdx].customerName = value;
+      setData(STORAGE_KEYS.bills, bills);
+      saveSingleBillToCloud(bills[billIdx]);
+    }
+  }
 }
 
 function toggleTailorDetails() {
@@ -4953,17 +5181,15 @@ function toggleTailorDetails() {
 }
 
 function renderTailorSummary() {
-  const orders = getData(STORAGE_KEYS.orders);
-  const adjustments = getData(STORAGE_KEYS.adjustments);
+  const orders = getData(STORAGE_KEYS.orders) || [];
+  const adjustments = getData(STORAGE_KEYS.adjustments) || [];
   
   // 1. Calculate Total Earned by Tailor (from Orders)
   const totalEarned = orders.reduce((sum, order) => sum + (parseFloat(order.tailor) || 0), 0);
   
   // 2. Calculate Total Paid to Tailor (from Withdrawals matching "tailor")
-  // We look for manual withdrawals where the description includes "tailor"
   const totalPaid = adjustments.reduce((sum, adj) => {
-    const isTailor = adj.desc.toLowerCase().includes('tailor');
-    // Only count withdrawals (negative amounts) as payments TO the tailor
+    const isTailor = (adj.desc || '').toLowerCase().includes('tailor');
     if (isTailor && adj.amount < 0) {
       return sum + Math.abs(adj.amount);
     }
@@ -4983,12 +5209,13 @@ function renderTailorSummary() {
 }
 
 function addManualOrder() {
-  const orders = getData(STORAGE_KEYS.orders);
+  const orders = getData(STORAGE_KEYS.orders) || [];
   const newOrder = {
     id: Date.now(),
     billId: null,
     billNumber: 'Manual',
     customerName: '',
+    phone: '',
     fabric: 0,
     tailor: 0,
     deliveryDate: '',
@@ -5000,6 +5227,7 @@ function addManualOrder() {
   orders.push(newOrder);
   setData(STORAGE_KEYS.orders, orders);
   renderOrdersTable();
+  updateDeliveriesDashboard();
   showToast('New manual order entry added!', 'success');
   
   // Focus the first input of the new row (it will be at the TOP because of sorting)
@@ -5040,10 +5268,12 @@ function initOrderNavigation() {
 
 function deleteOrder(id) {
   if (!confirm('Are you sure you want to delete this order entry?')) return;
-  const orders = getData(STORAGE_KEYS.orders);
+  const orders = getData(STORAGE_KEYS.orders) || [];
   const filtered = orders.filter(o => o.id !== id);
   setData(STORAGE_KEYS.orders, filtered);
   renderOrdersTable();
+  updateDeliveriesDashboard();
+  refreshDashboard();
   showToast('Order entry deleted', 'warning');
 }
 
@@ -5068,11 +5298,17 @@ function consolidateLedger() {
     if (orderIdx !== -1) {
       orders[orderIdx].billId = bill.id;
       orders[orderIdx].billNumber = bill.billNumber;
-      if (!orders[orderIdx].customerName || orders[orderIdx].customerName === 'Walk-in') {
+      if (!orders[orderIdx].customerName || orders[orderIdx].customerName === 'Walk-in' || orders[orderIdx].customerName === 'Walk-in Customer') {
         orders[orderIdx].customerName = bill.customerName;
+      }
+      if (!orders[orderIdx].phone && bill.phone) {
+        orders[orderIdx].phone = bill.phone;
       }
       if (!orders[orderIdx].deliveryDate && bill.deliveryDate) {
         orders[orderIdx].deliveryDate = bill.deliveryDate;
+      }
+      if (bill.isDelivered !== undefined) {
+        orders[orderIdx].isDelivered = bill.isDelivered;
       }
       orders[orderIdx].fabric = fabric;
       if (orders[orderIdx].tailor === undefined || orders[orderIdx].tailor === null || orders[orderIdx].tailor === 0) {
@@ -5091,8 +5327,10 @@ function consolidateLedger() {
         billId: bill.id,
         billNumber: bill.billNumber,
         orderNumber: bill.orderNumber || '',
-        customerName: bill.customerName,
+        customerName: bill.customerName || 'Walk-in Customer',
+        phone: bill.phone || '',
         deliveryDate: bill.noDelivery ? '' : (bill.deliveryDate || ''),
+        isDelivered: !!bill.isDelivered,
         fabric: fabric,
         tailor: tailor,
         advance: advance,
@@ -5105,6 +5343,7 @@ function consolidateLedger() {
 
   setData(STORAGE_KEYS.orders, orders);
   renderOrdersTable();
+  updateDeliveriesDashboard();
   refreshDashboard();
   showToast(`Ledger consolidated! Reconciled ${consolidatedCount} orders${addedCount > 0 ? `, recovered ${addedCount} missing orders` : ''}.`, 'success');
 }
