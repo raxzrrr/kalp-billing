@@ -1,4 +1,10 @@
 // ===== KALP Billing App - Application Logic =====
+// On startup: if we just did an import, skip the cloud pull so we don't
+// overwrite the freshly-imported localStorage data with stale cloud state.
+if (sessionStorage.getItem('kalp_just_imported')) {
+  sessionStorage.removeItem('kalp_just_imported');
+  window.__skipInitialCloudPull = true;
+}
 
 // --- Data Store (localStorage) ---
 const STORAGE_KEYS = {
@@ -346,6 +352,12 @@ async function syncToCloud(key, data) {
 }
 
 async function pullFromCloud() {
+  // Skip if we just did an import — local data is already authoritative
+  if (window.__skipInitialCloudPull) {
+    window.__skipInitialCloudPull = false;
+    console.log('Cloud pull skipped — local data was just imported');
+    return true;
+  }
   if (!supabaseClient) return false;
   let success = false;
   try {
@@ -5295,8 +5307,10 @@ function importAllData(event) {
         showToast('Data imported locally. Will sync to cloud when online.', 'warning');
       }
 
-      // Step 3: Reload after short delay so the toast is visible
-      setTimeout(() => window.location.reload(), 1500);
+      // Step 3: Reload AFTER sync is done — set flag so init skips cloud pull
+      // (without flag, the reload would pull old cloud data and overwrite the import)
+      sessionStorage.setItem('kalp_just_imported', '1');
+      setTimeout(() => window.location.reload(), 800);
 
     } catch (err) {
       showToast('Error reading backup file: ' + err.message, 'error');
