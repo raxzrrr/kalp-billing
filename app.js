@@ -97,8 +97,7 @@ function handleRealtimeBillInsert(newRow) {
 
   // Advance counter if higher
   if (bill.billNumber > getBillCounter()) {
-    appCache[STORAGE_KEYS.billCounter] = bill.billNumber;
-    localStorage.setItem(STORAGE_KEYS.billCounter, bill.billNumber.toString());
+    setBillCounter(bill.billNumber);
   }
 
   rebuildLedgerCache();
@@ -407,10 +406,8 @@ async function pullFromCloud() {
 
       // Automatically sync bill counter to highest cloud bill number to avoid collisions
       const maxBillNum = Math.max(...billsResult.data.map(r => parseInt(r.bill_number) || 0));
-      const currentCounter = getBillCounter();
-      if (maxBillNum > currentCounter) {
-        appCache[STORAGE_KEYS.billCounter] = maxBillNum;
-        localStorage.setItem(STORAGE_KEYS.billCounter, maxBillNum.toString());
+      if (maxBillNum > getBillCounter()) {
+        setBillCounter(maxBillNum);
       }
       success = true;
     }
@@ -531,15 +528,33 @@ function updateStorageMeter() {
 
 function getBillCounter() {
   const val = appCache[STORAGE_KEYS.billCounter] || localStorage.getItem(STORAGE_KEYS.billCounter) || '0';
-  return parseInt(val);
+  let counter = parseInt(val) || 0;
+  // Always inspect existing bills so counter can never fall behind actual bills in records
+  const bills = appCache[STORAGE_KEYS.bills] || (function() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.bills)) || []; } catch(e) { return []; }
+  })();
+  if (Array.isArray(bills) && bills.length > 0) {
+    for (const b of bills) {
+      const bNum = parseInt(b.billNumber) || 0;
+      if (bNum > counter) counter = bNum;
+    }
+  }
+  return counter;
 }
 
-function incrementBillCounter() {
-  const next = getBillCounter() + 1;
+function setBillCounter(val) {
+  const num = parseInt(val) || 0;
+  const current = getBillCounter();
+  const next = Math.max(current, num);
   appCache[STORAGE_KEYS.billCounter] = next;
   localStorage.setItem(STORAGE_KEYS.billCounter, next.toString());
   syncToCloud(STORAGE_KEYS.billCounter, next);
   return next;
+}
+
+function incrementBillCounter() {
+  const next = getBillCounter() + 1;
+  return setBillCounter(next);
 }
 
 function getBarcodeCounter() {
@@ -885,7 +900,7 @@ function refreshDashboard() {
   let totalPendingOrders = 0;
   orders.forEach(o => {
     const p = parseFloat(o.pending) || 0;
-    if (p > 0) totalPendingOrders += p;
+    if (p > 0.01) totalPendingOrders += p;
   });
   setDashboardStat('stat-pending-amount', formatCurrency(totalPendingOrders));
 
@@ -966,8 +981,10 @@ function openChartDetailModal(period) {
       const order = orderMap[bill.id] || {};
       const tailor = parseFloat(order.tailor) || 0;
       const advance = parseFloat(order.advance) || 0;
-      const cls = bill.totalPending > 0 ? 'badge-warning' : 'badge-success';
-      const txt = bill.totalPending > 0 ? 'Pending' : 'Paid';
+      const pAmt = parseFloat(bill.totalPending);
+      const isPending = !isNaN(pAmt) ? (pAmt > 0.01) : ((parseFloat(order.pending) || 0) > 0.01);
+      const cls = isPending ? 'badge-warning' : 'badge-success';
+      const txt = isPending ? 'Pending' : 'Paid';
 
       return `<tr>
         <td>
@@ -1075,8 +1092,10 @@ function renderRecentBills(bills, filter = '') {
   }
   const recent = filter ? filteredBills.slice(-50).reverse() : filteredBills.slice(-10).reverse();
   body.innerHTML = recent.map(bill => {
-    const cls = bill.totalPending > 0 ? 'badge-warning' : 'badge-success';
-    const txt = bill.totalPending > 0 ? 'Pending' : 'Paid';
+    const pAmt = parseFloat(bill.totalPending);
+    const isPending = !isNaN(pAmt) ? (pAmt > 0.01) : false;
+    const cls = isPending ? 'badge-warning' : 'badge-success';
+    const txt = isPending ? 'Pending' : 'Paid';
     return `<tr>
       <td>
         <span class="clickable-bill-no" onclick="openBill('${bill.id}')" title="Click to view/edit bill #${bill.billNumber}">
@@ -2807,7 +2826,11 @@ function initBillingPage() {
   if (!dateInput.value) dateInput.value = new Date().toISOString().split('T')[0];
 
   const billNumInput = document.getElementById('bill-number');
-  if (!billNumInput.value || billNumInput.value === 'Auto-generated') {
+  const bills = getData(STORAGE_KEYS.bills) || [];
+  const currentValNum = parseInt(String(billNumInput.value || '').replace(/\D/g, ''), 10);
+  const isAlreadyUsed = currentValNum && bills.some(b => b.billNumber === currentValNum);
+
+  if (!editingBillId && (!billNumInput.value || billNumInput.value === 'Auto-generated' || isAlreadyUsed)) {
     billNumInput.value = `KALP-${String(getBillCounter() + 1).padStart(4, '0')}`;
   }
 
@@ -3113,15 +3136,46 @@ function updatePendingAmount() {
   const grandTotal = totalInput ? (parseFloat(totalInput.value) || 0) : 0;
   const noTailor = document.getElementById('bill-no-tailor')?.checked;
   const tailorAmt = noTailor ? 0 : (parseFloat(document.getElementById('bill-tailor-amount')?.value) || 0);
-  const totalPayable = grandTotal + tailorAmt;
+  const totalPayable = Math.round((grandTotal + tailorAmt) * 100) / 100;
+
+  // Breakdown rows when tailoring is present
+  const tailRow = document.getElementById('summary-tailoring-row');
+  const tailAmtEl = document.getElementById('summary-tailoring-amount');
+  const totalPayableRow = document.getElementById('summary-total-payable-row');
+  const totalPayableEl = document.getElementById('summary-total-payable');
+
+  if (tailorAmt > 0) {
+    if (tailRow) tailRow.style.display = 'flex';
+    if (tailAmtEl) tailAmtEl.textContent = formatCurrency(tailorAmt);
+    if (totalPayableRow) totalPayableRow.style.display = 'flex';
+    if (totalPayableEl) totalPayableEl.textContent = formatCurrency(totalPayable);
+  } else {
+    if (tailRow) tailRow.style.display = 'none';
+    if (totalPayableRow) totalPayableRow.style.display = 'none';
+  }
 
   const advanceInput = document.getElementById('bill-advance-paid');
   const advance = advanceInput ? (parseFloat(advanceInput.value) || 0) : 0;
-  const pending = Math.max(0, totalPayable - advance);
+  let pending = Math.round((totalPayable - advance) * 100) / 100;
+  if (pending <= 0.01) pending = 0;
 
   const pendingEl = document.getElementById('summary-pending');
   if (pendingEl) {
     pendingEl.textContent = formatCurrency(pending);
+  }
+}
+
+function setFullAdvancePaid() {
+  const totalInput = document.getElementById('bill-grand-total-input');
+  const grandTotal = totalInput ? (parseFloat(totalInput.value) || 0) : 0;
+  const noTailor = document.getElementById('bill-no-tailor')?.checked;
+  const tailorAmt = noTailor ? 0 : (parseFloat(document.getElementById('bill-tailor-amount')?.value) || 0);
+  const totalPayable = Math.round((grandTotal + tailorAmt) * 100) / 100;
+
+  const advanceInput = document.getElementById('bill-advance-paid');
+  if (advanceInput) {
+    advanceInput.value = totalPayable.toFixed(2);
+    updatePendingAmount();
   }
 }
 
@@ -3314,6 +3368,22 @@ function setPaymentMethod(method, autoFocus = false) {
       splitFields.style.display = 'none';
     }
   }
+
+  // Auto-fill full advance payment if user hasn't typed an advance yet (and creating a new bill)
+  if (!editingBillId) {
+    const advEl = document.getElementById('bill-advance-paid');
+    if (advEl && (!advEl.value || parseFloat(advEl.value) === 0)) {
+      const totalInput = document.getElementById('bill-grand-total-input');
+      const grandTotal = totalInput ? (parseFloat(totalInput.value) || 0) : 0;
+      const noTailor = document.getElementById('bill-no-tailor')?.checked;
+      const tailorAmt = noTailor ? 0 : (parseFloat(document.getElementById('bill-tailor-amount')?.value) || 0);
+      const totalPayable = Math.round((grandTotal + tailorAmt) * 100) / 100;
+      if (totalPayable > 0) {
+        advEl.value = totalPayable.toFixed(2);
+        updatePendingAmount();
+      }
+    }
+  }
   
   if (autoFocus) {
     setTimeout(() => {
@@ -3478,6 +3548,12 @@ function saveAndPrintBill(printSide = 'both') {
     sgst = subtotal * 0.025;
   }
 
+  // Cleanly round monetary amounts to 2 decimal places to avoid floating point residues
+  grandTotal = Math.round(grandTotal * 100) / 100;
+  subtotal = Math.round(subtotal * 100) / 100;
+  cgst = Math.round(cgst * 100) / 100;
+  sgst = Math.round(sgst * 100) / 100;
+
   let splitCash = 0;
   let splitPhonepe = 0;
   if (paymentMethod === 'Split') {
@@ -3490,9 +3566,11 @@ function saveAndPrintBill(printSide = 'both') {
     }
   }
 
-  const tailorAmountNum = noTailor ? 0 : (parseFloat(tailorAmountInput) || 0);
-  const totalObligation = grandTotal + tailorAmountNum;
-  const totalPending = Math.max(0, totalObligation - advancePaid);
+  const tailorAmountNum = noTailor ? 0 : (Math.round((parseFloat(tailorAmountInput) || 0) * 100) / 100);
+  const totalObligation = Math.round((grandTotal + tailorAmountNum) * 100) / 100;
+  const cleanAdvancePaid = Math.round(advancePaid * 100) / 100;
+  let totalPending = Math.round((totalObligation - cleanAdvancePaid) * 100) / 100;
+  if (totalPending <= 0.01) totalPending = 0;
 
   const bills = getData(STORAGE_KEYS.bills);
 
@@ -3527,8 +3605,8 @@ function saveAndPrintBill(printSide = 'both') {
         billNumber: finalBillNumber,
         date, gstMode, paymentMethod,
         orderNumber,
-        advancePaid,
-        totalPending,
+        advancePaid: cleanAdvancePaid,
+        totalPending: totalPending,
         splitCash, splitPhonepe,
         customerName: customerName || 'Walk-in Customer', phone, email,
         deliveryDate: noDelivery ? '' : deliveryDateInput,
@@ -3563,10 +3641,7 @@ function saveAndPrintBill(printSide = 'both') {
       saveSingleBillToCloud(bills[index]);
 
       // Update counter if this number is higher
-      const currentCounter = getBillCounter();
-      if (finalBillNumber > currentCounter) {
-        localStorage.setItem(STORAGE_KEYS.billCounter, finalBillNumber.toString());
-      }
+      setBillCounter(finalBillNumber);
 
       // Apply new stock
       bills[index].items.forEach(item => {
@@ -3590,7 +3665,7 @@ function saveAndPrintBill(printSide = 'both') {
         orders[orderIdx].tailor = tailorAmountNum;
         orders[orderIdx].fabric = parseFloat(bills[index].grandTotal) || 0;
         orders[orderIdx].total = totalObligation;
-        orders[orderIdx].advance = advancePaid;
+        orders[orderIdx].advance = cleanAdvancePaid;
         orders[orderIdx].pending = totalPending;
         if (orderNumber) orders[orderIdx].orderNumber = orderNumber;
         
@@ -3605,7 +3680,7 @@ function saveAndPrintBill(printSide = 'both') {
           deliveryDate: noDelivery ? '' : deliveryDateInput,
           fabric: parseFloat(bills[index].grandTotal) || 0,
           tailor: tailorAmountNum,
-          advance: advancePaid,
+          advance: cleanAdvancePaid,
           total: totalObligation,
           pending: totalPending,
           orderNumber: orderNumber || ''
@@ -3622,25 +3697,31 @@ function saveAndPrintBill(printSide = 'both') {
   } else {
     // CREATE NEW BILL
     let finalBillNumber;
-    if (manualBillNumber) {
+    const currentMax = getBillCounter();
+    const suggestedNum = currentMax + 1;
+
+    // Check if user explicitly typed a DIFFERENT custom number than suggested
+    if (manualBillNumber && manualBillNumber !== suggestedNum) {
       finalBillNumber = manualBillNumber;
       if (bills.some(b => b.billNumber === finalBillNumber)) {
         showToast(`Bill #KALP-${String(finalBillNumber).padStart(4, '0')} already exists in your records! Please use a different number or delete the old bill first.`, 'error');
         return;
       }
-      const currentCounter = getBillCounter();
-      if (finalBillNumber > currentCounter) {
-        localStorage.setItem(STORAGE_KEYS.billCounter, finalBillNumber.toString());
-      }
+      setBillCounter(Math.max(currentMax, finalBillNumber));
     } else {
-      finalBillNumber = incrementBillCounter();
+      // Auto-generated bill number (or kept auto-suggested number)
+      finalBillNumber = suggestedNum;
+      if (bills.some(b => b.billNumber === finalBillNumber)) {
+        finalBillNumber = Math.max(...bills.map(b => parseInt(b.billNumber) || 0), currentMax) + 1;
+      }
+      setBillCounter(finalBillNumber);
     }
 
     const bill = {
       id: Date.now(), billNumber: finalBillNumber, date, gstMode, paymentMethod,
       orderNumber,
-      advancePaid,
-      totalPending,
+      advancePaid: cleanAdvancePaid,
+      totalPending: totalPending,
       splitCash, splitPhonepe,
       customerName: customerName || 'Walk-in Customer', phone, email,
       deliveryDate: noDelivery ? '' : deliveryDateInput,
@@ -3692,7 +3773,7 @@ function saveAndPrintBill(printSide = 'both') {
       fabric: bill.grandTotal,
       tailor: tailorAmountNum,
       deliveryDate: noDelivery ? '' : deliveryDateInput,
-      advance: advancePaid,
+      advance: cleanAdvancePaid,
       total: totalObligation,
       pending: totalPending
     });
@@ -3886,7 +3967,7 @@ function renderFrontBillPageHTML(bill, shop) {
               <td style="padding:2px 6px;">Advance Paid</td>
               <td style="padding:2px 6px;text-align:right;">₹${parseFloat(bill.advancePaid).toFixed(2)}</td>
             </tr>` : ''}
-            ${(bill.totalPending > 0) ? `
+            ${((parseFloat(bill.totalPending) || 0) > 0.01) ? `
             <tr style="border-top:1px solid #eee; font-size:10px; color:#b91c1c; font-weight:700;">
               <td style="padding:2px 6px;">Balance Due</td>
               <td style="padding:2px 6px;text-align:right;">₹${parseFloat(bill.totalPending).toFixed(2)}</td>
@@ -4041,7 +4122,7 @@ function renderBackBillPageHTML(bill, shop) {
             </tr>
             <tr style="border-top:2px solid #000;background:#000;color:#fff;font-size:13px;font-weight:900;">
               <td style="padding:5px 6px;">BALANCE DUE</td>
-              <td style="padding:5px 6px;text-align:right;">₹${(parseFloat(bill.totalPending) || 0).toFixed(2)}</td>
+              <td style="padding:5px 6px;text-align:right;">${(parseFloat(bill.totalPending) || 0) <= 0.01 ? 'PAID (₹0.00)' : `₹${(parseFloat(bill.totalPending) || 0).toFixed(2)}`}</td>
             </tr>
           </table>
         </div>
@@ -5023,7 +5104,7 @@ function saveShopDetails() {
   
   if (!isNaN(nextBill) && nextBill > 0) {
     // We set the counter to nextBill - 1 because incrementBillCounter adds 1
-    localStorage.setItem(STORAGE_KEYS.billCounter, (nextBill - 1).toString());
+    setBillCounter(nextBill - 1);
   }
 
   showToast('Shop details and bill sequence updated!', 'success');
@@ -5080,7 +5161,7 @@ function clearAllBillsData() {
   setData(STORAGE_KEYS.bills, []);
   setData(STORAGE_KEYS.orders, []);
   setData(STORAGE_KEYS.adjustments, []);
-  localStorage.setItem(STORAGE_KEYS.billCounter, '0');
+  setBillCounter(0);
   
   if (typeof refreshDashboard === 'function') refreshDashboard();
   if (typeof renderOrdersTable === 'function') renderOrdersTable();
@@ -5278,9 +5359,11 @@ function updateOrderField(id, field, value) {
   // Recalculate logic for auto-updates
   if (field === 'fabric' || field === 'tailor') {
     order.total = parseFloat(((parseFloat(order.fabric) || 0) + (parseFloat(order.tailor) || 0)).toFixed(2));
-    order.pending = parseFloat((order.total - (parseFloat(order.advance) || 0)).toFixed(2));
+    order.pending = parseFloat(Math.max(0, order.total - (parseFloat(order.advance) || 0)).toFixed(2));
+    if (order.pending <= 0.01) order.pending = 0;
   } else if (field === 'total' || field === 'advance') {
-    order.pending = parseFloat(((parseFloat(order.total) || 0) - (parseFloat(order.advance) || 0)).toFixed(2));
+    order.pending = parseFloat(Math.max(0, (parseFloat(order.total) || 0) - (parseFloat(order.advance) || 0)).toFixed(2));
+    if (order.pending <= 0.01) order.pending = 0;
   }
 
   // Sync back to DOM for instant visual numbers
@@ -5288,7 +5371,7 @@ function updateOrderField(id, field, value) {
   const pendingEl = document.getElementById(`order-pending-${id}`);
   if (totalEl) totalEl.value = fmtRaw(order.total);
   if (pendingEl) {
-    const isPaid = order.pending <= 0;
+    const isPaid = (parseFloat(order.pending) || 0) <= 0.01;
     pendingEl.value = isPaid ? 'Full Paid' : fmtRaw(order.pending);
     pendingEl.style.background = isPaid ? '#e6fffa' : '#fff';
     pendingEl.style.color = isPaid ? '#059669' : 'inherit';
