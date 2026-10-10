@@ -360,9 +360,12 @@ function migrateAndFixBillPendingAmounts() {
   bills.forEach(bill => {
     const truePending = getBillPendingAmount(bill);
     const stored = parseFloat(bill.totalPending);
-    if (bill.totalPending === undefined || bill.totalPending === null || isNaN(stored) || (stored <= 0.01 && truePending > 0.01)) {
+    if (bill.totalPending === undefined || bill.totalPending === null || isNaN(stored) || Math.abs(stored - truePending) > 0.01) {
       bill.totalPending = truePending;
       changed = true;
+      if (typeof saveSingleBillToCloud === 'function') {
+        saveSingleBillToCloud(bill);
+      }
     }
   });
 
@@ -1005,9 +1008,11 @@ function openChartDetailModal(period) {
       const order = orderMap[bill.id] || {};
       const tailor = parseFloat(order.tailor) || 0;
       const advance = parseFloat(order.advance) || 0;
-      const isPending = getBillPendingAmount(bill) > 0.01;
+      const pend = getBillPendingAmount(bill);
+      const isPending = pend > 0.01;
+      const isExcess = pend < -0.01;
       const cls = isPending ? 'badge-warning' : 'badge-success';
-      const txt = isPending ? 'Pending' : 'Paid';
+      const txt = isPending ? 'Pending' : (isExcess ? 'Excess' : 'Paid');
 
       return `<tr>
         <td>
@@ -1115,9 +1120,11 @@ function renderRecentBills(bills, filter = '') {
   }
   const recent = filter ? filteredBills.slice(-50).reverse() : filteredBills.slice(-10).reverse();
   body.innerHTML = recent.map(bill => {
-    const isPending = getBillPendingAmount(bill) > 0.01;
+    const pend = getBillPendingAmount(bill);
+    const isPending = pend > 0.01;
+    const isExcess = pend < -0.01;
     const cls = isPending ? 'badge-warning' : 'badge-success';
-    const txt = isPending ? 'Pending' : 'Paid';
+    const txt = isPending ? 'Pending' : (isExcess ? 'Excess' : 'Paid');
     return `<tr>
       <td>
         <span class="clickable-bill-no" onclick="openBill('${bill.id}')" title="Click to view/edit bill #${bill.billNumber}">
@@ -1567,14 +1574,14 @@ function getBillPendingAmount(bill) {
   const tailor = parseFloat(bill.tailorAmount || 0);
   const totalObligation = Math.round((fabric + tailor) * 100) / 100;
   const advance = Math.round((parseFloat(bill.advancePaid) || 0) * 100) / 100;
-  const calcPending = Math.max(0, Math.round((totalObligation - advance) * 100) / 100);
+  const calcPending = Math.round((totalObligation - advance) * 100) / 100;
 
   // If bill has totalPending property recorded as a valid number
   if (bill.totalPending !== undefined && bill.totalPending !== null && !isNaN(parseFloat(bill.totalPending))) {
-    const stored = Math.max(0, Math.round(parseFloat(bill.totalPending) * 100) / 100);
-    // If stored pending was 0 or near 0, but advance paid is strictly less than total obligation,
+    const stored = Math.round(parseFloat(bill.totalPending) * 100) / 100;
+    // If stored pending was 0 or near 0, but calculated pending is non-zero,
     // the stored zero is a glitch artifact — the true remaining balance is calcPending:
-    if (stored <= 0.01 && calcPending > 0.01) {
+    if (Math.abs(stored) <= 0.01 && Math.abs(calcPending) > 0.01) {
       return calcPending;
     }
     return stored;
@@ -1636,7 +1643,7 @@ function openBillPreviewModal(idOrBill) {
           const oAdv = parseFloat(order.advance || 0);
           const oPending = (parseFloat(order.pending) !== undefined && !isNaN(parseFloat(order.pending)))
             ? parseFloat(order.pending)
-            : Math.max(0, Math.round(((oFab + oTailor) - oAdv) * 100) / 100);
+            : Math.round(((oFab + oTailor) - oAdv) * 100) / 100;
 
           bill = {
             id: order.billId || order.id || Date.now(),
@@ -1711,10 +1718,20 @@ function openBillPreviewModal(idOrBill) {
   const fabricAmount = parseFloat(bill.grandTotal || bill.subtotal || 0);
   const tailorAmount = parseFloat(bill.tailorAmount || 0);
   const totalDue = getBillPendingAmount(bill);
-  const isPaid = totalDue <= 0.01;
+  const isPaid = Math.abs(totalDue) <= 0.01;
+  const isExcess = totalDue < -0.01;
+
+  let badgeHTML = '';
+  if (isExcess) {
+    badgeHTML = `<span class="badge" style="background:#059669; color:#fff;">Excess: -₹${Math.abs(totalDue).toFixed(2)}</span>`;
+  } else if (isPaid) {
+    badgeHTML = `<span class="badge badge-success">Paid</span>`;
+  } else {
+    badgeHTML = `<span class="badge badge-warning">Due: ${formatCurrency(totalDue)}</span>`;
+  }
 
   if (footerInfo) {
-    footerInfo.innerHTML = `<strong>${billNoStr}</strong> • Date: ${formatDate(bill.date)} • Fabric: ${formatCurrency(fabricAmount)} ${tailorAmount > 0 ? `• Tailoring: ${formatCurrency(tailorAmount)}` : ''} • <span class="badge ${isPaid ? 'badge-success' : 'badge-warning'}">${isPaid ? 'Paid' : `Due: ${formatCurrency(totalDue)}`}</span>`;
+    footerInfo.innerHTML = `<strong>${billNoStr}</strong> • Date: ${formatDate(bill.date)} • Fabric: ${formatCurrency(fabricAmount)} ${tailorAmount > 0 ? `• Tailoring: ${formatCurrency(tailorAmount)}` : ''} • ${badgeHTML}`;
   }
 
   const handleEdit = () => {
@@ -2615,7 +2632,7 @@ function renderDeliveriesFiltered() {
           <div style="font-weight: 600; color: var(--text-primary);">${esc(d.customerName || 'Walk-in Customer')}</div>
           ${d.phone ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">📞 ${esc(d.phone)}</div>` : ''}
         </td>
-        <td style="text-align: right; font-weight: 600; color: ${d.pending > 0 ? 'var(--danger-color)' : 'var(--success-color)'};">${d.pending <= 0 ? 'Paid' : formatCurrency(d.pending)}</td>
+        <td style="text-align: right; font-weight: 600; color: ${d.pending > 0.01 ? 'var(--danger-color)' : 'var(--success-color)'};">${Math.abs(parseFloat(d.pending) || 0) <= 0.01 ? 'Paid' : formatCurrency(d.pending)}</td>
         <td style="text-align: center;">${tailorPaidHtml}</td>
         <td style="text-align: center; white-space: nowrap;">${editBtnHtml}${actionHtml}</td>
       </tr>`;
@@ -3203,11 +3220,25 @@ function updatePendingAmount() {
   const advanceInput = document.getElementById('bill-advance-paid');
   const advance = advanceInput ? (parseFloat(advanceInput.value) || 0) : 0;
   let pending = Math.round((totalPayable - advance) * 100) / 100;
-  if (pending <= 0.01) pending = 0;
+  if (Math.abs(pending) <= 0.01) pending = 0;
 
   const pendingEl = document.getElementById('summary-pending');
+  const pendingLabel = document.querySelector('#summary-pending')?.previousElementSibling;
   if (pendingEl) {
     pendingEl.textContent = formatCurrency(pending);
+    if (pending < -0.01) {
+      pendingEl.style.color = '#059669';
+      if (pendingLabel) {
+        pendingLabel.textContent = 'Excess Advance (₹)';
+        pendingLabel.style.color = '#059669';
+      }
+    } else {
+      pendingEl.style.color = pending > 0.01 ? '#dc2626' : 'var(--text-color, #111)';
+      if (pendingLabel) {
+        pendingLabel.textContent = 'Pending Amount (₹)';
+        pendingLabel.style.color = pending > 0.01 ? '#dc2626' : 'inherit';
+      }
+    }
   }
 
   const btnFabAdv = document.getElementById('btn-fabric-advance');
@@ -3631,7 +3662,7 @@ function saveAndPrintBill(printSide = 'both') {
   const totalObligation = Math.round((grandTotal + tailorAmountNum) * 100) / 100;
   const cleanAdvancePaid = Math.round(advancePaid * 100) / 100;
   let totalPending = Math.round((totalObligation - cleanAdvancePaid) * 100) / 100;
-  if (totalPending <= 0.01) totalPending = 0;
+  if (Math.abs(totalPending) <= 0.01) totalPending = 0;
 
   const bills = getData(STORAGE_KEYS.bills);
 
@@ -4028,11 +4059,23 @@ function renderFrontBillPageHTML(bill, shop) {
               <td style="padding:2px 6px;">Advance Paid</td>
               <td style="padding:2px 6px;text-align:right;">₹${parseFloat(bill.advancePaid).toFixed(2)}</td>
             </tr>` : ''}
-            ${(getBillPendingAmount(bill) > 0.01) ? `
-            <tr style="border-top:1px solid #eee; font-size:10px; color:#b91c1c; font-weight:700;">
-              <td style="padding:2px 6px;">Balance Due</td>
-              <td style="padding:2px 6px;text-align:right;">₹${getBillPendingAmount(bill).toFixed(2)}</td>
-            </tr>` : ''}
+            ${(() => {
+              const pending = getBillPendingAmount(bill);
+              if (pending < -0.01) {
+                return `
+                <tr style="border-top:1px solid #eee; font-size:10px; color:#15803d; font-weight:700;">
+                  <td style="padding:2px 6px;">Balance (Excess)</td>
+                  <td style="padding:2px 6px;text-align:right;">-₹${Math.abs(pending).toFixed(2)}</td>
+                </tr>`;
+              } else if (pending > 0.01) {
+                return `
+                <tr style="border-top:1px solid #eee; font-size:10px; color:#b91c1c; font-weight:700;">
+                  <td style="padding:2px 6px;">Balance Due</td>
+                  <td style="padding:2px 6px;text-align:right;">₹${pending.toFixed(2)}</td>
+                </tr>`;
+              }
+              return '';
+            })()}
             <tr style="border-top:1px solid #000;">
               <td style="padding:3px 6px;font-size:10px;color:#555;">Payment Mode</td>
               <td style="padding:3px 6px;text-align:right;font-weight:700;">
@@ -4183,7 +4226,12 @@ function renderBackBillPageHTML(bill, shop) {
             </tr>
             <tr style="border-top:2px solid #000;background:#000;color:#fff;font-size:13px;font-weight:900;">
               <td style="padding:5px 6px;">BALANCE DUE</td>
-              <td style="padding:5px 6px;text-align:right;">${getBillPendingAmount(bill) <= 0.01 ? 'PAID (₹0.00)' : `₹${getBillPendingAmount(bill).toFixed(2)}`}</td>
+              <td style="padding:5px 6px;text-align:right;">${(() => {
+                const p = getBillPendingAmount(bill);
+                if (p < -0.01) return `-₹${Math.abs(p).toFixed(2)}`;
+                if (Math.abs(p) <= 0.01) return 'PAID (₹0.00)';
+                return `₹${p.toFixed(2)}`;
+              })()}</td>
             </tr>
           </table>
         </div>
@@ -5089,7 +5137,11 @@ function printBarcodeSticker(name, price, barcodeValue, count = 1, supplierName 
 // ===================================================================
 
 function formatCurrency(amount) {
-  return '₹' + parseFloat(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const val = parseFloat(amount || 0);
+  if (val < -0.009) {
+    return '-₹' + Math.abs(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return '₹' + val.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtRaw(amount) {
@@ -5359,7 +5411,7 @@ function renderOrdersTable(filter = '') {
       <td><input type="number" class="form-input input-sm order-nav-input" style="background:#fff;" value="${order.tailor || ''}" oninput="updateOrderField(${order.id}, 'tailor', this.value)"></td>
       <td><input type="date" class="form-input input-sm order-nav-input" style="background:#fff;" value="${order.deliveryDate || ''}" oninput="updateOrderField(${order.id}, 'deliveryDate', this.value)"></td>
       <td><input type="number" class="form-input input-sm order-nav-input" style="background:#fff;" value="${order.advance || ''}" oninput="updateOrderField(${order.id}, 'advance', this.value)"></td>
-      <td><input type="text" class="form-input input-sm" style="background:${order.pending <= 0 ? '#e6fffa' : '#fff'};font-weight:700;color:${order.pending <= 0 ? '#059669' : 'inherit'};" value="${order.pending <= 0 ? 'Full Paid' : fmtRaw(order.pending)}" id="order-pending-${order.id}" readonly></td>
+      <td><input type="text" class="form-input input-sm" style="background:${(Math.abs(parseFloat(order.pending) || 0) <= 0.01 || (parseFloat(order.pending) || 0) < -0.01) ? '#e6fffa' : '#fff'};font-weight:700;color:${(Math.abs(parseFloat(order.pending) || 0) <= 0.01 || (parseFloat(order.pending) || 0) < -0.01) ? '#059669' : 'inherit'};" value="${Math.abs(parseFloat(order.pending) || 0) <= 0.01 ? 'Full Paid' : fmtRaw(order.pending)}" id="order-pending-${order.id}" readonly></td>
       <td><input type="number" class="form-input input-sm order-nav-input" style="background:#fff;font-weight:600;" value="${fmtRaw(order.total)}" id="order-total-${order.id}" oninput="updateOrderField(${order.id}, 'total', this.value)"></td>
       <td><button class="btn btn-icon btn-delete" onclick="deleteOrder(${order.id})" title="Delete Order">×</button></td>
     </tr>`;
@@ -5420,11 +5472,11 @@ function updateOrderField(id, field, value) {
   // Recalculate logic for auto-updates
   if (field === 'fabric' || field === 'tailor') {
     order.total = parseFloat(((parseFloat(order.fabric) || 0) + (parseFloat(order.tailor) || 0)).toFixed(2));
-    order.pending = parseFloat(Math.max(0, order.total - (parseFloat(order.advance) || 0)).toFixed(2));
-    if (order.pending <= 0.01) order.pending = 0;
+    order.pending = parseFloat((order.total - (parseFloat(order.advance) || 0)).toFixed(2));
+    if (Math.abs(order.pending) <= 0.01) order.pending = 0;
   } else if (field === 'total' || field === 'advance') {
-    order.pending = parseFloat(Math.max(0, (parseFloat(order.total) || 0) - (parseFloat(order.advance) || 0)).toFixed(2));
-    if (order.pending <= 0.01) order.pending = 0;
+    order.pending = parseFloat(((parseFloat(order.total) || 0) - (parseFloat(order.advance) || 0)).toFixed(2));
+    if (Math.abs(order.pending) <= 0.01) order.pending = 0;
   }
 
   // Sync back to DOM for instant visual numbers
@@ -5432,10 +5484,12 @@ function updateOrderField(id, field, value) {
   const pendingEl = document.getElementById(`order-pending-${id}`);
   if (totalEl) totalEl.value = fmtRaw(order.total);
   if (pendingEl) {
-    const isPaid = (parseFloat(order.pending) || 0) <= 0.01;
-    pendingEl.value = isPaid ? 'Full Paid' : fmtRaw(order.pending);
-    pendingEl.style.background = isPaid ? '#e6fffa' : '#fff';
-    pendingEl.style.color = isPaid ? '#059669' : 'inherit';
+    const val = parseFloat(order.pending) || 0;
+    const isPaid = Math.abs(val) <= 0.01;
+    const isExcess = val < -0.01;
+    pendingEl.value = isPaid ? 'Full Paid' : fmtRaw(val);
+    pendingEl.style.background = (isPaid || isExcess) ? '#e6fffa' : '#fff';
+    pendingEl.style.color = (isPaid || isExcess) ? '#059669' : 'inherit';
   }
   
   setData(STORAGE_KEYS.orders, orders);
@@ -5574,7 +5628,7 @@ function consolidateLedger() {
     const tailor = parseFloat(bill.tailorAmount) || 0;
     const total = parseFloat((fabric + tailor).toFixed(2));
     const advance = parseFloat(bill.advancePaid) || 0;
-    const pending = Math.max(0, parseFloat((total - advance).toFixed(2)));
+    const pending = parseFloat((total - advance).toFixed(2));
 
     if (orderIdx !== -1) {
       orders[orderIdx].billId = bill.id;
