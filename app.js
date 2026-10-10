@@ -1575,6 +1575,11 @@ function getBillPendingAmount(bill) {
   const totalObligation = Math.round((fabric + tailor) * 100) / 100;
   const advance = Math.round((parseFloat(bill.advancePaid) || 0) * 100) / 100;
   const calcPending = Math.round((totalObligation - advance) * 100) / 100;
+  const itemsTotal = Math.round((parseFloat(bill.itemsTotal) || 0) * 100) / 100;
+  const discAmt = Math.round((parseFloat(bill.discountAmount) || 0) * 100) / 100;
+  const noTailor = !!bill.noTailor || tailor === 0;
+
+  let finalPending = calcPending;
 
   // If bill has totalPending property recorded as a valid number
   if (bill.totalPending !== undefined && bill.totalPending !== null && !isNaN(parseFloat(bill.totalPending))) {
@@ -1582,11 +1587,43 @@ function getBillPendingAmount(bill) {
     // If stored pending was 0 or near 0, but calculated pending is non-zero,
     // the stored zero is a glitch artifact — the true remaining balance is calcPending:
     if (Math.abs(stored) <= 0.01 && Math.abs(calcPending) > 0.01) {
-      return calcPending;
+      finalPending = calcPending;
+    } else {
+      finalPending = stored;
     }
-    return stored;
   }
-  return calcPending;
+
+  // Detect negative balance data artifacts (e.g. historical doubled advances or pre-discount advance on pure fabric sales)
+  if (finalPending < -0.01) {
+    // Large negative balances (> 1000) are legacy database doubling/import artifacts
+    if (finalPending < -1000) return 0;
+
+    // Artifact 1: advance is approx 2x total obligation (stored pending was -totalObligation)
+    if (Math.abs(advance - 2 * totalObligation) <= 1.0) return 0;
+
+    // Artifact 2: advance is total obligation + fabric (excess equals fabric / grandTotal)
+    if (Math.abs(advance - (totalObligation + fabric)) <= 1.0 || 
+        Math.abs(advance - (totalObligation + Math.round(fabric))) <= 1.0 ||
+        Math.abs(finalPending + fabric) <= 1.0 ||
+        Math.abs(finalPending + Math.round(fabric)) <= 1.0) {
+      return 0;
+    }
+
+    // Artifact 3: advance is tailor + 2 * fabric (or 2 * fabric)
+    if (Math.abs(advance - (tailor + 2 * fabric)) <= 1.0 ||
+        Math.abs(advance - 2 * fabric) <= 1.0) {
+      return 0;
+    }
+
+    // Artifact 4: Pure fabric sale where advance was pre-discount itemsTotal or excess equals discount amount
+    if (noTailor && discAmt > 0) {
+      if (Math.abs(advance - itemsTotal) <= 0.1 || Math.abs(Math.abs(finalPending) - discAmt) <= 0.1) {
+        return 0;
+      }
+    }
+  }
+
+  return finalPending;
 }
 
 // --- Open Bill Preview by id, billNumber, or Order Ledger reference ---
@@ -3188,9 +3225,24 @@ function updateBillSummary() {
   document.getElementById('summary-sgst').textContent = formatCurrency(sgst);
   
   const totalInput = document.getElementById('bill-grand-total-input');
+  const prevGrandTotal = totalInput ? (parseFloat(totalInput.value) || 0) : 0;
   if (totalInput && !isManualTotalOverride) {
     totalInput.value = grandTotal.toFixed(2);
   }
+
+  // Auto-sync advance payment if it was tracking the full grand total or if pure fabric sale with payment method set
+  const advanceInput = document.getElementById('bill-advance-paid');
+  const paymentMethod = document.getElementById('bill-payment-method')?.value;
+  const noTailor = document.getElementById('bill-no-tailor')?.checked;
+  if (advanceInput && !editingBillId) {
+    const curAdvance = parseFloat(advanceInput.value) || 0;
+    const wasFullPaid = (prevGrandTotal > 0 && Math.abs(curAdvance - prevGrandTotal) <= 0.05) ||
+                        (itemsTotal > 0 && Math.abs(curAdvance - itemsTotal) <= 0.05);
+    if ((wasFullPaid || (noTailor && paymentMethod && curAdvance > 0)) && grandTotal > 0) {
+      advanceInput.value = grandTotal.toFixed(2);
+    }
+  }
+
   updatePendingAmount();
 }
 
@@ -3466,10 +3518,12 @@ function setPaymentMethod(method, autoFocus = false) {
     const noTailor = document.getElementById('bill-no-tailor')?.checked;
     if (noTailor) {
       const advEl = document.getElementById('bill-advance-paid');
-      if (advEl && (!advEl.value || parseFloat(advEl.value) === 0)) {
-        const totalInput = document.getElementById('bill-grand-total-input');
-        const grandTotal = totalInput ? (parseFloat(totalInput.value) || 0) : 0;
-        if (grandTotal > 0) {
+      const totalInput = document.getElementById('bill-grand-total-input');
+      const grandTotal = totalInput ? (parseFloat(totalInput.value) || 0) : 0;
+      if (advEl && grandTotal > 0) {
+        const curAdv = parseFloat(advEl.value) || 0;
+        const itemsTotal = lineItems.reduce((s, i) => s + (i.total || 0), 0);
+        if (!advEl.value || curAdv === 0 || Math.abs(curAdv - itemsTotal) <= 0.05) {
           advEl.value = grandTotal.toFixed(2);
           updatePendingAmount();
         }
@@ -3660,7 +3714,13 @@ function saveAndPrintBill(printSide = 'both') {
 
   const tailorAmountNum = noTailor ? 0 : (Math.round((parseFloat(tailorAmountInput) || 0) * 100) / 100);
   const totalObligation = Math.round((grandTotal + tailorAmountNum) * 100) / 100;
-  const cleanAdvancePaid = Math.round(advancePaid * 100) / 100;
+  let cleanAdvancePaid = Math.round(advancePaid * 100) / 100;
+
+  // Prevent pre-discount advance artifact on pure fabric sales
+  if (noTailor && discountAmount > 0 && Math.abs(cleanAdvancePaid - itemsTotal) <= 0.05) {
+    cleanAdvancePaid = grandTotal;
+  }
+
   let totalPending = Math.round((totalObligation - cleanAdvancePaid) * 100) / 100;
   if (Math.abs(totalPending) <= 0.01) totalPending = 0;
 
@@ -5628,7 +5688,7 @@ function consolidateLedger() {
     const tailor = parseFloat(bill.tailorAmount) || 0;
     const total = parseFloat((fabric + tailor).toFixed(2));
     const advance = parseFloat(bill.advancePaid) || 0;
-    const pending = parseFloat((total - advance).toFixed(2));
+    const pending = getBillPendingAmount(bill);
 
     if (orderIdx !== -1) {
       orders[orderIdx].billId = bill.id;
@@ -5653,7 +5713,11 @@ function consolidateLedger() {
       if (orders[orderIdx].advance === undefined || orders[orderIdx].advance === null) {
         orders[orderIdx].advance = advance;
       }
-      orders[orderIdx].pending = parseFloat(((orders[orderIdx].total || 0) - (parseFloat(orders[orderIdx].advance) || 0)).toFixed(2));
+      // If bill is paid in full but advance had old artifact, align advance with total
+      if (pending === 0 && orders[orderIdx].advance > orders[orderIdx].total) {
+        orders[orderIdx].advance = orders[orderIdx].total;
+      }
+      orders[orderIdx].pending = pending;
       if (bill.orderNumber) orders[orderIdx].orderNumber = bill.orderNumber;
       consolidatedCount++;
     } else {
@@ -5668,7 +5732,7 @@ function consolidateLedger() {
         isDelivered: !!bill.isDelivered,
         fabric: fabric,
         tailor: tailor,
-        advance: advance,
+        advance: (pending === 0 && advance > total) ? total : advance,
         total: total,
         pending: pending
       });
