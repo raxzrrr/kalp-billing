@@ -922,12 +922,34 @@ function refreshDashboard() {
   setDashboardStat('stat-cash-hand', formatCurrency(cashTotal));
   setDashboardStat('stat-bank-balance', formatCurrency(bankTotal));
   
-  // Pending orders
+  // Pending orders & bills (Unified authoritative calculation)
   const orders = getData(STORAGE_KEYS.orders) || [];
+  const processedKeys = new Set();
   let totalPendingOrders = 0;
-  orders.forEach(o => {
-    const p = parseFloat(o.pending) || 0;
+  orders.forEach(order => {
+    const bill = bills.find(b => 
+      (order.billId && b.id == order.billId) || 
+      (order.billNumber && b.billNumber && String(b.billNumber) === String(order.billNumber).replace(/\D/g, ''))
+    );
+    const total = parseFloat(order.total) || (bill ? ((parseFloat(bill.grandTotal || bill.subtotal) || 0) + (parseFloat(bill.tailorAmount) || 0)) : ((parseFloat(order.fabric) || 0) + (parseFloat(order.tailor) || 0)));
+    const advance = bill ? (parseFloat(bill.advancePaid) || 0) : (parseFloat(order.advance) || 0);
+    const p = bill ? getBillPendingAmount(bill) : (parseFloat(order.pending) !== undefined && !isNaN(parseFloat(order.pending)) ? parseFloat(order.pending) : (total - advance));
+
+    if (order.billId) processedKeys.add(String(order.billId));
+    if (order.billNumber) processedKeys.add(String(order.billNumber));
+    if (bill && bill.id) processedKeys.add(String(bill.id));
+    if (bill && bill.billNumber) processedKeys.add(String(bill.billNumber));
+
     if (p > 0.01) totalPendingOrders += p;
+  });
+
+  bills.forEach(bill => {
+    const bId = String(bill.id);
+    const bNum = String(bill.billNumber);
+    if (!processedKeys.has(bId) && !processedKeys.has(bNum)) {
+      const bPend = getBillPendingAmount(bill);
+      if (bPend > 0.01) totalPendingOrders += bPend;
+    }
   });
   setDashboardStat('stat-pending-amount', formatCurrency(totalPendingOrders));
 
@@ -1754,7 +1776,8 @@ function openBillPreviewModal(idOrBill) {
 
   const fabricAmount = parseFloat(bill.grandTotal || bill.subtotal || 0);
   const tailorAmount = parseFloat(bill.tailorAmount || 0);
-  const totalDue = getBillPendingAmount(bill);
+  let totalDue = getBillPendingAmount(bill);
+  if (isNaN(totalDue) || totalDue === null || totalDue === undefined) totalDue = 0;
   const isPaid = Math.abs(totalDue) <= 0.01;
   const isExcess = totalDue < -0.01;
 
@@ -2224,11 +2247,22 @@ function openPendingDetailsModal() {
   const processedKeys = new Set();
 
   orders.forEach(order => {
-    const total = parseFloat(order.total) || ((parseFloat(order.fabric) || 0) + (parseFloat(order.tailor) || 0));
-    const advance = parseFloat(order.advance) || 0;
-    const pending = parseFloat(order.pending) !== undefined ? parseFloat(order.pending) : (total - advance);
-    const fabric = parseFloat(order.fabric) || 0;
-    const tailor = parseFloat(order.tailor) || 0;
+    // Find matching bill to ensure accurate, up-to-date calculation & details
+    const bill = bills.find(b => 
+      (order.billId && b.id == order.billId) || 
+      (order.billNumber && b.billNumber && String(b.billNumber) === String(order.billNumber).replace(/\D/g, ''))
+    );
+
+    const total = parseFloat(order.total) || (bill ? ((parseFloat(bill.grandTotal || bill.subtotal) || 0) + (parseFloat(bill.tailorAmount) || 0)) : ((parseFloat(order.fabric) || 0) + (parseFloat(order.tailor) || 0)));
+    const advance = bill ? (parseFloat(bill.advancePaid) || 0) : (parseFloat(order.advance) || 0);
+    const pending = bill ? getBillPendingAmount(bill) : (parseFloat(order.pending) !== undefined && !isNaN(parseFloat(order.pending)) ? parseFloat(order.pending) : (total - advance));
+    const fabric = bill ? (parseFloat(bill.grandTotal || bill.subtotal) || 0) : (parseFloat(order.fabric) || 0);
+    const tailor = bill ? (parseFloat(bill.tailorAmount) || 0) : (parseFloat(order.tailor) || 0);
+
+    if (order.billId) processedKeys.add(String(order.billId));
+    if (order.billNumber) processedKeys.add(String(order.billNumber));
+    if (bill && bill.id) processedKeys.add(String(bill.id));
+    if (bill && bill.billNumber) processedKeys.add(String(bill.billNumber));
 
     if (pending > 0.01) {
       let fabricPending = 0;
@@ -2244,23 +2278,16 @@ function openPendingDetailsModal() {
       totalTailorPending += tailorPending;
       grandTotalPending += pending;
 
-      // Find matching bill to ensure customerName and phone are accurate
-      const bill = bills.find(b => 
-        (order.billId && b.id == order.billId) || 
-        (order.billNumber && b.billNumber && String(b.billNumber) === String(order.billNumber).replace(/\D/g, ''))
-      );
-
       const resolvedName = (order.customerName && order.customerName !== 'Walk-in' && order.customerName !== 'Walk-in Customer')
         ? order.customerName 
         : (bill && bill.customerName ? bill.customerName : (order.customerName || 'Walk-in Customer'));
 
       const resolvedPhone = order.phone || (bill ? bill.phone : '');
 
-      if (order.billId) processedKeys.add(String(order.billId));
-      if (order.billNumber) processedKeys.add(String(order.billNumber));
-
       pendingOrders.push({
         ...order,
+        billId: order.billId || (bill ? bill.id : null),
+        billNumber: order.billNumber || (bill ? bill.billNumber : ''),
         customerName: resolvedName,
         phone: resolvedPhone,
         total,
@@ -2279,8 +2306,10 @@ function openPendingDetailsModal() {
     if (!processedKeys.has(bId) && !processedKeys.has(bNum)) {
       const bPend = getBillPendingAmount(bill);
       if (bPend > 0.01) {
-        const fabric = parseFloat(bill.grandTotal) || 0;
-        const tailor = parseFloat(bill.tailorAmount) || 0;
+        const fabric = parseFloat(bill.grandTotal || bill.subtotal || 0);
+        const tailor = parseFloat(bill.tailorAmount || 0);
+        const bAdv = parseFloat(bill.advancePaid || 0);
+        const bTotal = Math.round((fabric + tailor) * 100) / 100;
         let fabricPending = 0;
         let tailorPending = 0;
         if (bAdv <= fabric) {
@@ -2308,6 +2337,13 @@ function openPendingDetailsModal() {
         });
       }
     }
+  });
+
+  // Sort descending by bill number so newest bills appear first
+  pendingOrders.sort((a, b) => {
+    const numA = parseInt(String(a.billNumber || '').replace(/\D/g, '')) || 0;
+    const numB = parseInt(String(b.billNumber || '').replace(/\D/g, '')) || 0;
+    return numB - numA;
   });
 
   cachedPendingOrders = pendingOrders;

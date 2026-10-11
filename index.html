@@ -169,7 +169,7 @@
           <div class="stat-card" style="background: rgba(239, 68, 68, 0.05); cursor: pointer; transition: transform 0.2s;" onclick="openPendingDetailsModal()" onmouseover="this.style.transform = 'translateY(-3px)'" onmouseout="this.style.transform = 'translateY(0)'">
             <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444">⏳</div>
             <div class="stat-info">
-              <div class="stat-value" id="stat-pending-amount" onclick="togglePrivacy(this, event)" title="Click to hide/reveal">₹0</div>
+              <div class="stat-value" id="stat-pending-amount">₹0</div>
               <div class="stat-label">Pending Amount</div>
             </div>
           </div>
@@ -1807,7 +1807,7 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=4.0.2"></script>
 <script>
   // PWA Service Worker Registration
   if ('serviceWorker' in navigator) {
