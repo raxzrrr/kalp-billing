@@ -1238,7 +1238,12 @@
             <div class="form-group" style="margin-bottom:14px;border-top:1px solid var(--border-color);padding-top:14px;">
               <label class="form-label">Next Bill Number Sequence</label>
               <input type="number" class="form-input" id="shop-next-bill" placeholder="e.g. 1">
-              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Current sequence is at ${getBillCounter()}. Set this to 1 and CLEAR ALL BILLS if you want to start fresh from KALP-0001.</p>
+              <p id="shop-next-bill-help" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Current sequence is at 1. Set this to 1 and CLEAR ALL BILLS if you want to start fresh from KALP-0001.</p>
+            </div>
+            <div style="margin-top: 18px;">
+              <button class="btn btn-primary" style="width: 100%; justify-content: center; padding: 10px 16px; font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 8px;" onclick="saveShopDetails()">
+                <span>💾</span> Save Shop Information
+              </button>
             </div>
           </div>
 
@@ -1883,7 +1888,7 @@
   </div>
 </div>
 
-<script src="app.js?v=4.0.3"></script>
+<script src="app.js?v=4.0.4"></script>
 <script>
   // PWA Service Worker Registration
   if ('serviceWorker' in navigator) {

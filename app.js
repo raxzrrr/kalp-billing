@@ -5453,7 +5453,12 @@ function loadShopDetails() {
   document.getElementById('shop-phone').value = details.phone || '';
   document.getElementById('shop-email').value = details.email || '';
   document.getElementById('shop-gstin').value = details.gstin || '';
-  document.getElementById('shop-next-bill').value = getBillCounter() + 1;
+  const curCounter = getBillCounter();
+  document.getElementById('shop-next-bill').value = curCounter + 1;
+  const helpEl = document.getElementById('shop-next-bill-help');
+  if (helpEl) {
+    helpEl.textContent = `Current sequence is at ${curCounter}. Set this to 1 and CLEAR ALL BILLS if you want to start fresh from KALP-0001.`;
+  }
 
   // Show logo if exists
   const currentLogo = (details.logo !== 'none' && details.logo !== false) ? (details.logo || 'image.png') : '';
