@@ -294,9 +294,10 @@ async function saveSingleBillToCloud(bill) {
     return;
   }
   try {
+    const billIdNum = (typeof bill.id === 'number' ? bill.id : parseInt(bill.id, 10)) || Date.now();
     const row = {
-      id: bill.id,
-      bill_number: bill.billNumber,
+      id: billIdNum,
+      bill_number: parseInt(bill.billNumber, 10) || 0,
       customer_name: bill.customerName || 'Walk-in Customer',
       phone: bill.phone || '',
       date: bill.date || new Date().toISOString().split('T')[0],
@@ -304,7 +305,11 @@ async function saveSingleBillToCloud(bill) {
       raw_data: bill,
       updated_at: new Date().toISOString()
     };
-    await supabaseClient.from('kalp_bills').upsert(row);
+    const { error } = await supabaseClient.from('kalp_bills').upsert(row);
+    if (error) {
+      console.warn('saveSingleBillToCloud error:', error);
+      addToOfflineQueue('single_bill_' + bill.id, { type: 'single_bill', bill });
+    }
   } catch (err) {
     console.warn('saveSingleBillToCloud exception:', err);
     addToOfflineQueue('single_bill_' + bill.id, { type: 'single_bill', bill });
@@ -425,13 +430,43 @@ async function pullFromCloud() {
     }
 
     if (billsResult.data && billsResult.data.length > 0) {
-      const bills = billsResult.data.map(r => r.raw_data).filter(Boolean);
-      appCache[STORAGE_KEYS.bills] = bills;
-      localStorage.setItem(STORAGE_KEYS.bills, JSON.stringify(bills));
+      const tableBills = billsResult.data.map(r => r.raw_data).filter(Boolean);
+      // Merge with any bills already loaded from store or local cache that might be missing from the table
+      const existingBills = Array.isArray(appCache[STORAGE_KEYS.bills]) ? appCache[STORAGE_KEYS.bills] : [];
+      const billMap = new Map();
+      existingBills.forEach(b => {
+        if (b && (b.id || b.billNumber)) {
+          billMap.set(String(b.billNumber || b.id), b);
+        }
+      });
+      tableBills.forEach(b => {
+        if (b && (b.id || b.billNumber)) {
+          billMap.set(String(b.billNumber || b.id), b);
+        }
+      });
+
+      // Auto-heal any orders whose bill is missing from bills
+      const currentOrders = getData(STORAGE_KEYS.orders) || [];
+      currentOrders.forEach(o => {
+        if (o && o.billNumber && !String(o.id || '').startsWith('ord-')) {
+          const numStr = String(o.billNumber).replace(/\D/g, '');
+          if (numStr && !billMap.has(numStr) && !billMap.has(String(o.billId))) {
+            const synth = synthesizeBillFromOrder(o);
+            if (synth) {
+              billMap.set(numStr, synth);
+              saveSingleBillToCloud(synth);
+            }
+          }
+        }
+      });
+
+      const mergedBills = Array.from(billMap.values()).sort((a, b) => (Number(a.billNumber) || 0) - (Number(b.billNumber) || 0));
+      appCache[STORAGE_KEYS.bills] = mergedBills;
+      localStorage.setItem(STORAGE_KEYS.bills, JSON.stringify(mergedBills));
       migrateAndFixBillPendingAmounts();
 
       // Automatically sync bill counter to highest cloud bill number to avoid collisions
-      const maxBillNum = Math.max(...billsResult.data.map(r => parseInt(r.bill_number) || 0));
+      const maxBillNum = Math.max(...mergedBills.map(r => parseInt(r.billNumber || r.bill_number) || 0));
       if (maxBillNum > getBillCounter()) {
         setBillCounter(maxBillNum);
       }
@@ -986,17 +1021,89 @@ function togglePrivacy(element, event) {
   }
 }
 
+function synthesizeBillFromOrder(order) {
+  if (!order) return null;
+  const num = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || 1;
+  const oFab = parseFloat(order.fabric || order.total || 0);
+  const oTailor = parseFloat(order.tailor || 0);
+  const oAdv = parseFloat(order.advance || 0);
+  const oPending = (parseFloat(order.pending) !== undefined && !isNaN(parseFloat(order.pending)))
+    ? parseFloat(order.pending)
+    : Math.round(((oFab + oTailor) - oAdv) * 100) / 100;
+
+  const taxSub = Math.round((oFab / 1.05) * 100) / 100;
+  const taxCgst = Math.round(((oFab - taxSub) / 2) * 100) / 100;
+  const taxSgst = Math.round((oFab - taxSub - taxCgst) * 100) / 100;
+
+  const billIdNum = (typeof order.billId === 'number' ? order.billId : parseInt(order.billId, 10)) ||
+                    (typeof order.id === 'number' ? order.id : parseInt(order.id, 10)) ||
+                    Date.now();
+
+  return {
+    id: billIdNum,
+    billNumber: num,
+    customerName: order.customerName || 'Walk-in Customer',
+    phone: order.phone || '',
+    email: '',
+    date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
+    tailorAmount: oTailor > 0 ? oTailor.toFixed(2) : '',
+    noTailor: oTailor <= 0,
+    advancePaid: oAdv,
+    totalPending: oPending,
+    deliveryDate: order.deliveryDate || '',
+    noDelivery: !order.deliveryDate,
+    orderNumber: order.orderNumber || '',
+    items: [{ itemName: 'Fabric Charges', qty: 1, price: taxSub, total: taxSub, barcodeId: null }],
+    itemsTotal: taxSub,
+    subtotal: taxSub,
+    cgst: taxCgst,
+    sgst: taxSgst,
+    grandTotal: oFab,
+    discountPercent: 0,
+    discountAmount: 0,
+    gstMode: 'excluding',
+    paymentMethod: 'PhonePe',
+    tailoringItems: oTailor > 0 ? [{ qty: 1, name: 'Kurta Pant', rate: oTailor, total: oTailor }] : [],
+    tailorAccessories: 0,
+    tailorHandwork: 0,
+    tailorEmbroidery: 0,
+    tailorDiscount: 0,
+    tailorPriority: false,
+    outfitInstructions: '',
+    outfitOptions: oTailor > 0 ? ['Kurta', 'Pant'] : [],
+    outfitQuantities: oTailor > 0 ? { Kurta: 1, Pant: 1 } : {},
+    createdAt: order.date ? new Date(order.date).toISOString() : new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
 function showPeriodDetails(period, amount, count) {
   openChartDetailModal(period);
 }
 
 function openChartDetailModal(period) {
-  const bills = getData(STORAGE_KEYS.bills);
-  const orders = getData(STORAGE_KEYS.orders);
+  const bills = getData(STORAGE_KEYS.bills) || [];
+  const orders = getData(STORAGE_KEYS.orders) || [];
   const tbody = document.getElementById('chart-detail-tbody');
   const title = document.getElementById('chart-detail-title');
   
   if (!tbody || !title) return;
+
+  // Build complete list of bills including any orders missing a bill entry
+  const billMap = new Map();
+  bills.forEach(b => { if (b) billMap.set(String(b.billNumber || b.id), b); });
+  orders.forEach(o => {
+    if (o && o.billNumber) {
+      const numStr = String(o.billNumber).replace(/\D/g, '');
+      if (numStr && !billMap.has(numStr) && !billMap.has(String(o.billId))) {
+        const synth = synthesizeBillFromOrder(o);
+        if (synth) {
+          billMap.set(numStr, synth);
+        }
+      }
+    }
+  });
+  const allKnownBills = Array.from(billMap.values()).sort((a, b) => (Number(a.billNumber) || 0) - (Number(b.billNumber) || 0));
 
   // 1. Set Title and Filter Bills
   let filteredBills = [];
@@ -1004,14 +1111,14 @@ function openChartDetailModal(period) {
   
   if (period === 'all') {
     displayLabel = 'All Time History';
-    filteredBills = [...bills].reverse();
+    filteredBills = [...allKnownBills].reverse();
   } else if (currentDashboardRange === 'month') {
     const [y, m] = period.split('-');
     displayLabel = new Date(y, m - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-    filteredBills = bills.filter(b => b.date.substring(0, 7) === period);
+    filteredBills = allKnownBills.filter(b => b.date && b.date.substring(0, 7) === period);
   } else {
     displayLabel = formatDate(period);
-    filteredBills = bills.filter(b => b.date === period);
+    filteredBills = allKnownBills.filter(b => b.date === period);
   }
   
   title.textContent = `Bills for ${displayLabel}`;
@@ -1461,6 +1568,23 @@ function editBill(idOrBill) {
   } else {
     bill = bills.find(b => b.id === idOrBill || b.id == idOrBill || b.billNumber == idOrBill || String(b.billNumber) === String(idOrBill));
   }
+  if (!bill) {
+    const orders = getData(STORAGE_KEYS.orders) || [];
+    const cleanId = String(idOrBill).trim();
+    let numStr = cleanId.replace(/.*(?:Bill\s*#?|KALP-?|#)/i, '').trim();
+    let num = parseInt(numStr, 10);
+    let order = orders.find(o =>
+      o.id === idOrBill || String(o.id) === cleanId || o.id == idOrBill ||
+      (o.billId && (o.billId === idOrBill || String(o.billId) === cleanId || o.billId == idOrBill))
+    );
+    if (!order && !isNaN(num)) {
+      order = orders.find(o => Number(o.billNumber) === num || String(o.billNumber).replace(/\D/g, '') === String(num));
+    }
+    if (!order) order = orders.find(o => String(o.billNumber) === numStr || String(o.billNumber) === cleanId);
+    if (order) {
+      bill = synthesizeBillFromOrder(order);
+    }
+  }
   if (!bill) return;
 
   const id = bill.id;
@@ -1696,31 +1820,7 @@ function openBillPreviewModal(idOrBill) {
           bill = bills.find(b => b.id == order.billId || String(b.id) === String(order.billId));
         }
         if (!bill) {
-          const bNo = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || num || 1;
-          const oFab = parseFloat(order.fabric || order.total || 0);
-          const oTailor = parseFloat(order.tailor || 0);
-          const oAdv = parseFloat(order.advance || 0);
-          const oPending = (parseFloat(order.pending) !== undefined && !isNaN(parseFloat(order.pending)))
-            ? parseFloat(order.pending)
-            : Math.round(((oFab + oTailor) - oAdv) * 100) / 100;
-
-          bill = {
-            id: order.billId || order.id || Date.now(),
-            billNumber: bNo,
-            customerName: order.customerName || 'Walk-in Customer',
-            phone: order.phone || '',
-            date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
-            tailorAmount: oTailor,
-            advancePaid: oAdv,
-            totalPending: oPending,
-            deliveryDate: order.deliveryDate || '',
-            noDelivery: !order.deliveryDate,
-            orderNumber: order.orderNumber || '',
-            items: [{ itemName: 'Fabric Charges', qty: 1, price: oFab, total: oFab }],
-            grandTotal: oFab,
-            subtotal: oFab,
-            gstMode: 'including'
-          };
+          bill = synthesizeBillFromOrder(order);
         }
       }
     }
@@ -3990,19 +4090,27 @@ function renderFrontBillPageHTML(bill, shop) {
     logoHTML = `<img src="${currentLogo}" style="max-height:48px;max-width:110px;margin-bottom:3px;border-radius:4px;object-fit:contain;">`;
   }
 
-  const totalQty = bill.items.reduce((s, i) => s + i.qty, 0);
-  const roundedGrand = Math.round(bill.grandTotal);
-  const roundOff = roundedGrand - bill.grandTotal;
+  const totalQty = Array.isArray(bill.items) ? bill.items.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0) : 0;
+  const grandTotalNum = parseFloat(bill.grandTotal || bill.subtotal || 0);
+  const roundedGrand = Math.round(grandTotalNum);
+  const roundOff = roundedGrand - grandTotalNum;
 
-  const itemRows = bill.items.map((item, i) => {
+  const subtotalNum = parseFloat(bill.subtotal !== undefined && bill.subtotal !== null ? bill.subtotal : grandTotalNum);
+  const cgstNum = parseFloat(bill.cgst || 0);
+  const sgstNum = parseFloat(bill.sgst || 0);
+  const itemsTotalNum = parseFloat(bill.itemsTotal !== undefined && bill.itemsTotal !== null ? bill.itemsTotal : subtotalNum);
+  const discountAmountNum = parseFloat(bill.discountAmount || 0);
+  const advancePaidNum = parseFloat(bill.advancePaid || 0);
+
+  const itemRows = (Array.isArray(bill.items) && bill.items.length > 0) ? bill.items.map((item, i) => {
     return `<tr>
       <td class="bc br ta-c">${i + 1}</td>
-      <td class="bc br" style="text-align:left;font-weight:500;">${esc(item.itemName.toUpperCase())}</td>
+      <td class="bc br" style="text-align:left;font-weight:500;">${esc(String(item.itemName || 'ITEM').toUpperCase())}</td>
       <td class="bc br ta-r">${fmtQty(item.qty)}</td>
-      <td class="bc br ta-r">${item.price.toFixed(2)}</td>
-      <td class="bc ta-r" style="font-weight:600;">${item.total.toFixed(2)}</td>
+      <td class="bc br ta-r">${(parseFloat(item.price) || 0).toFixed(2)}</td>
+      <td class="bc ta-r" style="font-weight:600;">${(parseFloat(item.total) || 0).toFixed(2)}</td>
     </tr>`;
-  }).join('');
+  }).join('') : `<tr><td class="bc br ta-c">1</td><td class="bc br" style="text-align:left;">Fabric Charges</td><td class="bc br ta-r">1</td><td class="bc br ta-r">${grandTotalNum.toFixed(2)}</td><td class="bc ta-r" style="font-weight:600;">${grandTotalNum.toFixed(2)}</td></tr>`;
 
   return `
     <div class="kb print-front-page">
@@ -4061,7 +4169,7 @@ function renderFrontBillPageHTML(bill, shop) {
             <td class="bc br" colspan="2" style="text-align:right;padding-right:6px;">TOTAL ITEMS/MTS</td>
             <td class="bc br ta-r">${fmtQty(totalQty)}</td>
             <td class="bc br"></td>
-            <td class="bc ta-r">${(bill.itemsTotal || bill.subtotal).toFixed(2)}</td>
+            <td class="bc ta-r">${itemsTotalNum.toFixed(2)}</td>
           </tr>
         </tfoot>
       </table>
@@ -4091,19 +4199,19 @@ function renderFrontBillPageHTML(bill, shop) {
             <tbody>
               <tr>
                 <td style="padding:3px 5px;border-right:1px solid #ccc;">CGST</td>
-                <td style="padding:3px 5px;border-right:1px solid #ccc;text-align:right;">${bill.subtotal.toFixed(2)}</td>
+                <td style="padding:3px 5px;border-right:1px solid #ccc;text-align:right;">${subtotalNum.toFixed(2)}</td>
                 <td style="padding:3px 5px;border-right:1px solid #ccc;text-align:center;">2.50%</td>
-                <td style="padding:3px 5px;text-align:right;">${bill.cgst.toFixed(2)}</td>
+                <td style="padding:3px 5px;text-align:right;">${cgstNum.toFixed(2)}</td>
               </tr>
               <tr style="border-top:1px solid #eee;">
                 <td style="padding:3px 5px;border-right:1px solid #ccc;">SGST</td>
-                <td style="padding:3px 5px;border-right:1px solid #ccc;text-align:right;">${bill.subtotal.toFixed(2)}</td>
+                <td style="padding:3px 5px;border-right:1px solid #ccc;text-align:right;">${subtotalNum.toFixed(2)}</td>
                 <td style="padding:3px 5px;border-right:1px solid #ccc;text-align:center;">2.50%</td>
-                <td style="padding:3px 5px;text-align:right;">${bill.sgst.toFixed(2)}</td>
+                <td style="padding:3px 5px;text-align:right;">${sgstNum.toFixed(2)}</td>
               </tr>
               <tr style="border-top:1px solid #000;font-weight:700;background:#f5f5f5;">
                 <td colspan="3" style="padding:3px 5px;border-right:1px solid #ccc;">Total Tax</td>
-                <td style="padding:3px 5px;text-align:right;">${(bill.cgst + bill.sgst).toFixed(2)}</td>
+                <td style="padding:3px 5px;text-align:right;">${(cgstNum + sgstNum).toFixed(2)}</td>
               </tr>
             </tbody>
           </table>
@@ -4115,23 +4223,23 @@ function renderFrontBillPageHTML(bill, shop) {
           <table style="font-size:11px;">
             <tr>
               <td style="padding:3px 6px;">Gross Total</td>
-              <td style="padding:3px 6px;text-align:right;">${(bill.itemsTotal || bill.subtotal).toFixed(2)}</td>
+              <td style="padding:3px 6px;text-align:right;">${itemsTotalNum.toFixed(2)}</td>
             </tr>
-            ${bill.discountAmount > 0 ? `<tr style="border-top:1px solid #eee; background:#fff9c4; font-weight:700;">
-              <td style="padding:3px 6px;">Discount (${bill.discountPercent}%)</td>
-              <td style="padding:3px 6px;text-align:right;">-${bill.discountAmount.toFixed(2)}</td>
+            ${discountAmountNum > 0 ? `<tr style="border-top:1px solid #eee; background:#fff9c4; font-weight:700;">
+              <td style="padding:3px 6px;">Discount (${bill.discountPercent || 0}%)</td>
+              <td style="padding:3px 6px;text-align:right;">-${discountAmountNum.toFixed(2)}</td>
             </tr>` : ''}
             <tr style="border-top:1px solid #eee;">
               <td style="padding:3px 6px;">Taxable Subtotal</td>
-              <td style="padding:3px 6px;text-align:right;">${bill.subtotal.toFixed(2)}</td>
+              <td style="padding:3px 6px;text-align:right;">${subtotalNum.toFixed(2)}</td>
             </tr>
             <tr style="border-top:1px solid #eee;">
               <td style="padding:3px 6px;">CGST (2.5%)</td>
-              <td style="padding:3px 6px;text-align:right;">${bill.cgst.toFixed(2)}</td>
+              <td style="padding:3px 6px;text-align:right;">${cgstNum.toFixed(2)}</td>
             </tr>
             <tr style="border-top:1px solid #eee;">
               <td style="padding:3px 6px;">SGST (2.5%)</td>
-              <td style="padding:3px 6px;text-align:right;">${bill.sgst.toFixed(2)}</td>
+              <td style="padding:3px 6px;text-align:right;">${sgstNum.toFixed(2)}</td>
             </tr>
             ${roundOff !== 0 ? `<tr style="border-top:1px solid #eee;">
               <td style="padding:3px 6px;font-size:10px;color:#555;">Round Off</td>
@@ -4150,10 +4258,10 @@ function renderFrontBillPageHTML(bill, shop) {
               <td style="padding:2px 6px;">Total Obligation</td>
               <td style="padding:2px 6px;text-align:right;">₹${(roundedGrand + (parseFloat(bill.tailorAmount) || 0)).toFixed(2)}</td>
             </tr>` : ''}
-            ${(bill.advancePaid > 0) ? `
+            ${(advancePaidNum > 0) ? `
             <tr style="border-top:1px solid #eee; font-size:10px; color:#15803d; font-weight:600;">
               <td style="padding:2px 6px;">Advance Paid</td>
-              <td style="padding:2px 6px;text-align:right;">₹${parseFloat(bill.advancePaid).toFixed(2)}</td>
+              <td style="padding:2px 6px;text-align:right;">₹${advancePaidNum.toFixed(2)}</td>
             </tr>` : ''}
             ${(() => {
               const pending = getBillPendingAmount(bill);

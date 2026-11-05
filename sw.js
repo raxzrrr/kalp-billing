@@ -1,5 +1,5 @@
 // KALP PWA Service Worker
-const CACHE_NAME = 'kalp-pwa-v4';
+const CACHE_NAME = 'kalp-pwa-v5';
 
 const STATIC_ASSETS = [
   './',
