@@ -702,6 +702,7 @@ function setTheme(theme) {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  checkLoginStatusOnLoad();
   const savedTheme = localStorage.getItem(STORAGE_KEYS.theme) || 'light';
   setTheme(savedTheme);
 

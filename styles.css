@@ -1575,7 +1575,7 @@ body.printing-bill #bill-professional-print {
 .login-overlay {
   position: fixed;
   inset: 0;
-  z-index: 99999;
+  z-index: 100000;
   background: radial-gradient(circle at top right, #2a2550 0%, #12121a 100%);
   display: flex;
   align-items: center;
