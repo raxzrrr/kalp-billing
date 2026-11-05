@@ -88,6 +88,14 @@
         <span class="nav-icon">🏪</span>
         <span class="nav-text">Shop Details</span>
       </a>
+      <a href="#security" class="nav-item" data-page="security" id="nav-security">
+        <span class="nav-icon">🔐</span>
+        <span class="nav-text">Login Security</span>
+      </a>
+      <a href="javascript:void(0)" class="nav-item" onclick="logoutUser()" style="color: #ef4444; margin-top: 6px;">
+        <span class="nav-icon">🚪</span>
+        <span class="nav-text">Log Out</span>
+      </a>
 
       <!-- PWA Install App Button -->
       <div id="pwa-install-container" style="display:none; padding: 16px 12px 8px 12px;">
@@ -1244,6 +1252,73 @@
       </div>
     </section>
 
+    <!-- ===== LOGIN & SECURITY SETTINGS ===== -->
+    <section class="page-section" id="page-security">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Login Security</h1>
+          <p class="page-subtitle">Manage username and password for signing into KALP</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-danger" onclick="logoutUser()">🚪 Log Out</button>
+        </div>
+      </div>
+      <div class="page-content" style="max-width: 650px;">
+        <div class="card" style="padding: 24px; margin-bottom: 20px;">
+          <h3 class="card-title" style="margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+            <span>🔑</span> Change Login Credentials
+          </h3>
+          <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 20px;">
+            Update your plain text username and password. Changes sync across all devices via Supabase cloud.
+          </p>
+          
+          <form id="change-credentials-form" onsubmit="handleChangeCredentials(event)">
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label" for="sec-current-username">Current Username</label>
+              <input type="text" class="form-input" id="sec-current-username" readonly style="opacity: 0.8; background: var(--bg-secondary);">
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label" for="sec-new-username">New Username</label>
+              <input type="text" class="form-input" id="sec-new-username" placeholder="Enter new username" required>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label" for="sec-new-password">New Password</label>
+              <div style="position: relative;">
+                <input type="password" class="form-input" id="sec-new-password" placeholder="Enter new password" required style="padding-right: 40px;">
+                <button type="button" class="btn-eye" onclick="togglePasswordVisibility('sec-new-password', this)" title="Show/Hide Password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted);">👁️</button>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 24px;">
+              <label class="form-label" for="sec-confirm-password">Confirm New Password</label>
+              <div style="position: relative;">
+                <input type="password" class="form-input" id="sec-confirm-password" placeholder="Re-type new password" required style="padding-right: 40px;">
+                <button type="button" class="btn-eye" onclick="togglePasswordVisibility('sec-confirm-password', this)" title="Show/Hide Password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted);">👁️</button>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 12px;">
+              <button type="submit" class="btn btn-primary" id="btn-save-credentials">💾 Save New Credentials</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card" style="padding: 20px; background: rgba(59, 130, 246, 0.04); border: 1px solid rgba(59, 130, 246, 0.2);">
+          <div style="display: flex; gap: 14px; align-items: flex-start;">
+            <span style="font-size: 1.5rem;">ℹ️</span>
+            <div>
+              <div style="font-weight: 700; color: var(--text-primary); margin-bottom: 4px;">About Simple Login</div>
+              <div style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;">
+                This system uses a lightweight local authentication check. Your username and password are saved to your settings store and synced with your shop cloud. Default credentials are <strong>admin</strong> / <strong>password</strong>.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -1516,6 +1591,7 @@
             <tr>
               <th>Delivery Date</th>
               <th>Bill #</th>
+              <th>Order #</th>
               <th>Customer</th>
               <th style="text-align: right;">Pending (₹)</th>
               <th style="text-align: center;">Tailor Paid</th>
@@ -1888,6 +1964,42 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeGSTReportModal()">Cancel</button>
       <button class="btn btn-accent" onclick="generateGSTReport()" id="gst-report-download-btn">📥 Download Report</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Simple Login Overlay ===== -->
+<div id="login-overlay" class="login-overlay" style="display: none;">
+  <div class="login-card">
+    <div class="login-brand">
+      <img src="image.png" id="login-logo-img" alt="Shop Logo" class="login-logo">
+      <h2 class="login-title">KALP Billing</h2>
+      <p class="login-subtitle">Sign in to your account</p>
+    </div>
+    <form id="login-form" onsubmit="handleLoginSubmit(event)">
+      <div id="login-error-msg" class="login-error" style="display: none;"></div>
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label class="form-label" for="login-username">Username</label>
+        <div class="input-with-icon">
+          <span class="input-icon">👤</span>
+          <input type="text" id="login-username" class="form-input" placeholder="Enter username" autocomplete="username" required>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom: 20px;">
+        <label class="form-label" for="login-password">Password</label>
+        <div class="input-with-icon" style="position: relative;">
+          <span class="input-icon">🔒</span>
+          <input type="password" id="login-password" class="form-input" placeholder="Enter password" autocomplete="current-password" required style="padding-right: 40px;">
+          <button type="button" class="btn-eye" onclick="togglePasswordVisibility('login-password', this)" title="Show/Hide Password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted);">👁️</button>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary" id="btn-login-submit" style="width: 100%; padding: 12px; font-size: 1rem; font-weight: 700; border-radius: var(--radius-md); box-shadow: var(--accent-glow);">
+        Sign In ➔
+      </button>
+    </form>
+    <div class="login-footer" style="margin-top: 20px; text-align: center; font-size: 0.8rem; color: var(--text-muted);">
+      Default credentials: <strong style="color: var(--text-primary);">admin</strong> / <strong style="color: var(--text-primary);">password</strong><br>
+      <span style="font-size: 0.75rem;">(Change anytime in Settings &gt; Login Security)</span>
     </div>
   </div>
 </div>

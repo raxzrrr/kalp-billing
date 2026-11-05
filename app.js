@@ -20,7 +20,8 @@ const STORAGE_KEYS = {
   deletedBills: 'kalp_deleted_bills',
   staff: 'kalp_staff',
   attendance: 'kalp_attendance',
-  consignments: 'kalp_consignments'
+  consignments: 'kalp_consignments',
+  auth: 'kalp_auth'
 };
 
 // --- Global Cache for Performance
@@ -674,6 +675,7 @@ function navigateTo(page) {
   if (page === 'consignment') renderConsignments();
   if (page === 'staff') renderStaffPage();
   if (page === 'shopdetails') loadShopDetails();
+  if (page === 'security') loadSecuritySettings();
 }
 
 function handleRoute() {
@@ -753,6 +755,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   updateStorageMeter();
   handleRoute();
   initDashboardPrivacy();
+  checkLoginStatusOnLoad();
 });
 
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -2669,6 +2672,7 @@ function openDeliveriesModal() {
         ? o.customerName 
         : (bill && bill.customerName ? bill.customerName : (o.customerName || 'Walk-in Customer'));
       const phone = o.phone || (bill ? bill.phone : '');
+      const orderNumber = o.orderNumber || (bill && bill.orderNumber) || '';
 
       if (o.billId) processedKeys.add(String(o.billId));
       if (o.billNumber) processedKeys.add(String(o.billNumber));
@@ -2677,6 +2681,7 @@ function openDeliveriesModal() {
         id: o.id,
         billId: o.billId || (bill ? bill.id : o.id),
         billNumber: o.billNumber,
+        orderNumber: orderNumber,
         customerName: customerName,
         phone: phone,
         deliveryDate: o.deliveryDate,
@@ -2697,6 +2702,7 @@ function openDeliveriesModal() {
           id: b.id,
           billId: b.id,
           billNumber: b.billNumber,
+          orderNumber: b.orderNumber || '',
           customerName: b.customerName || 'Walk-in Customer',
           phone: b.phone || '',
           deliveryDate: b.deliveryDate,
@@ -2749,10 +2755,11 @@ function renderDeliveriesFiltered() {
   if (query) {
     deliveries = deliveries.filter(d => {
       const bStr = String(d.billNumber || '').toLowerCase();
+      const oStr = String(d.orderNumber || '').toLowerCase();
       const name = String(d.customerName || '').toLowerCase();
       const phone = String(d.phone || '').toLowerCase();
       const date = String(d.deliveryDate || '').toLowerCase();
-      return bStr.includes(query) || name.includes(query) || phone.includes(query) || date.includes(query);
+      return bStr.includes(query) || oStr.includes(query) || name.includes(query) || phone.includes(query) || date.includes(query);
     });
   }
 
@@ -2760,7 +2767,7 @@ function renderDeliveriesFiltered() {
     const emptyMsg = query 
       ? `No ${currentDeliveriesTab} deliveries match "${esc(query)}".`
       : (currentDeliveriesTab === 'pending' ? 'No pending fabric deliveries.' : 'No completed deliveries yet.');
-    body.innerHTML = `<tr><td colspan="6"><div class="empty-state" style="padding: 24px; text-align: center;">
+    body.innerHTML = `<tr><td colspan="7"><div class="empty-state" style="padding: 24px; text-align: center;">
       <div class="empty-icon">🎉</div><div class="empty-text" style="font-weight: 700; margin-top: 6px;">${query ? 'No matching results' : 'All Clear'}</div>
       <div class="empty-sub" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 4px;">${emptyMsg}</div>
     </div></td></tr>`;
@@ -2800,6 +2807,9 @@ function renderDeliveriesFiltered() {
           <span class="clickable-bill-no" onclick="openBill('${billTarget}')" title="Preview Bill #KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : esc(String(d.billNumber))}">
             #KALP-${billDisplayNo ? billDisplayNo.padStart(4, '0') : esc(String(d.billNumber))}
           </span>
+        </td>
+        <td style="font-weight: 600; color: var(--accent-primary);">
+          ${d.orderNumber ? esc(d.orderNumber) : '<span style="color:var(--text-muted); font-weight: normal;">—</span>'}
         </td>
         <td>
           <div style="font-weight: 600; color: var(--text-primary);">${esc(d.customerName || 'Walk-in Customer')}</div>
@@ -5393,6 +5403,13 @@ document.addEventListener('keydown', (e) => {
 
 function getShopDetails() {
   try {
+    const cached = appCache[STORAGE_KEYS.shopDetails];
+    if (cached && typeof cached === 'object') {
+      if (!cached.logo && cached.logo !== false && cached.logo !== 'none') {
+        cached.logo = 'image.png';
+      }
+      return cached;
+    }
     const d = JSON.parse(localStorage.getItem(STORAGE_KEYS.shopDetails)) || {};
     if (!d.logo && d.logo !== false && d.logo !== 'none') {
       d.logo = 'image.png';
@@ -5413,11 +5430,12 @@ function saveShopDetails() {
 
   const existing = getShopDetails();
   const details = {
+    ...existing,
     name, address, phone, email, gstin,
     logo: existing.logo !== undefined ? existing.logo : 'image.png'  // preserve existing logo
   };
 
-  localStorage.setItem(STORAGE_KEYS.shopDetails, JSON.stringify(details));
+  setData(STORAGE_KEYS.shopDetails, details);
   
   if (!isNaN(nextBill) && nextBill > 0) {
     // We set the counter to nextBill - 1 because incrementBillCounter adds 1
@@ -5507,10 +5525,10 @@ function handleLogoUpload(event) {
     document.getElementById('logo-preview-img').style.display = 'block';
     document.getElementById('logo-placeholder').style.display = 'none';
 
-    // Save to localStorage
+    // Save to localStorage and Cloud
     const details = getShopDetails();
     details.logo = base64;
-    localStorage.setItem(STORAGE_KEYS.shopDetails, JSON.stringify(details));
+    setData(STORAGE_KEYS.shopDetails, details);
     showToast('Logo uploaded!', 'success');
   };
   reader.readAsDataURL(file);
@@ -5519,7 +5537,7 @@ function handleLogoUpload(event) {
 function removeLogo() {
   const details = getShopDetails();
   details.logo = 'none';
-  localStorage.setItem(STORAGE_KEYS.shopDetails, JSON.stringify(details));
+  setData(STORAGE_KEYS.shopDetails, details);
 
   document.getElementById('logo-preview-img').src = '';
   document.getElementById('logo-preview-img').style.display = 'none';
@@ -5546,7 +5564,7 @@ function handleQrUpload(event) {
 
     const details = getShopDetails();
     details.qrCode = base64;
-    localStorage.setItem(STORAGE_KEYS.shopDetails, JSON.stringify(details));
+    setData(STORAGE_KEYS.shopDetails, details);
     showToast('QR Code uploaded!', 'success');
   };
   reader.readAsDataURL(file);
@@ -5555,7 +5573,7 @@ function handleQrUpload(event) {
 function removeQrCode() {
   const details = getShopDetails();
   details.qrCode = '';
-  localStorage.setItem(STORAGE_KEYS.shopDetails, JSON.stringify(details));
+  setData(STORAGE_KEYS.shopDetails, details);
 
   document.getElementById('qr-preview-img').src = '';
   document.getElementById('qr-preview-img').style.display = 'none';
@@ -5563,6 +5581,160 @@ function removeQrCode() {
   document.getElementById('shop-qr-input').value = '';
   showToast('QR Code removed', 'warning');
 }
+
+// ===================================================================
+// SIMPLE LOGIN & SECURITY SYSTEM
+// ===================================================================
+
+function getAuthCredentials() {
+  try {
+    const raw = (appCache && appCache[STORAGE_KEYS.auth]) || localStorage.getItem(STORAGE_KEYS.auth);
+    if (raw) {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (parsed && typeof parsed === 'object' && parsed.username && parsed.password) {
+        return parsed;
+      }
+    }
+  } catch (e) {}
+  return { username: 'admin', password: 'password' };
+}
+
+function saveAuthCredentials(username, password) {
+  const creds = { username: String(username).trim(), password: String(password).trim() };
+  setData(STORAGE_KEYS.auth, creds);
+  return creds;
+}
+
+function isLoggedIn() {
+  return localStorage.getItem('kalp_logged_in') === 'true';
+}
+
+function checkLoginStatusOnLoad() {
+  const overlay = document.getElementById('login-overlay');
+  if (!overlay) return;
+  if (!isLoggedIn()) {
+    overlay.style.display = 'flex';
+    const shop = getShopDetails();
+    const loginLogo = document.getElementById('login-logo-img');
+    if (loginLogo && shop && shop.logo && shop.logo !== 'none') {
+      loginLogo.src = shop.logo;
+    }
+    const uInput = document.getElementById('login-username');
+    setTimeout(() => uInput?.focus(), 150);
+  } else {
+    overlay.style.display = 'none';
+  }
+}
+
+function handleLoginSubmit(event) {
+  if (event) event.preventDefault();
+  const u = document.getElementById('login-username')?.value.trim();
+  const p = document.getElementById('login-password')?.value.trim();
+  const errEl = document.getElementById('login-error-msg');
+  const creds = getAuthCredentials();
+
+  if (u === creds.username && p === creds.password) {
+    localStorage.setItem('kalp_logged_in', 'true');
+    const overlay = document.getElementById('login-overlay');
+    if (overlay) {
+      overlay.classList.add('login-fade-out');
+      setTimeout(() => {
+        overlay.style.display = 'none';
+        overlay.classList.remove('login-fade-out');
+      }, 300);
+    }
+    if (errEl) errEl.style.display = 'none';
+    showToast('Signed in successfully!', 'success');
+  } else {
+    if (errEl) {
+      errEl.textContent = 'Invalid username or password';
+      errEl.style.display = 'block';
+    }
+    const card = document.querySelector('.login-card');
+    if (card) {
+      card.classList.add('shake-anim');
+      setTimeout(() => card.classList.remove('shake-anim'), 400);
+    }
+  }
+}
+
+function logoutUser() {
+  if (!confirm('Are you sure you want to log out?')) return;
+  localStorage.removeItem('kalp_logged_in');
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) {
+    overlay.style.display = 'flex';
+    const uInput = document.getElementById('login-username');
+    const pInput = document.getElementById('login-password');
+    if (uInput) uInput.value = '';
+    if (pInput) pInput.value = '';
+    const errEl = document.getElementById('login-error-msg');
+    if (errEl) errEl.style.display = 'none';
+    setTimeout(() => uInput?.focus(), 150);
+  }
+  showToast('Logged out successfully', 'info');
+}
+
+function togglePasswordVisibility(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  if (input.type === 'password') {
+    input.type = 'text';
+    if (btn) btn.textContent = '🙈';
+  } else {
+    input.type = 'password';
+    if (btn) btn.textContent = '👁️';
+  }
+}
+
+function loadSecuritySettings() {
+  const creds = getAuthCredentials();
+  const currUserEl = document.getElementById('sec-current-username');
+  const newUserEl = document.getElementById('sec-new-username');
+  const newPassEl = document.getElementById('sec-new-password');
+  const confPassEl = document.getElementById('sec-confirm-password');
+
+  if (currUserEl) currUserEl.value = creds.username;
+  if (newUserEl) newUserEl.value = creds.username;
+  if (newPassEl) newPassEl.value = '';
+  if (confPassEl) confPassEl.value = '';
+}
+
+function handleChangeCredentials(event) {
+  if (event) event.preventDefault();
+  const newUser = document.getElementById('sec-new-username')?.value.trim();
+  const newPass = document.getElementById('sec-new-password')?.value.trim();
+  const confPass = document.getElementById('sec-confirm-password')?.value.trim();
+
+  if (!newUser) {
+    showToast('Username cannot be empty', 'error');
+    return;
+  }
+  if (!newPass) {
+    showToast('Password cannot be empty', 'error');
+    return;
+  }
+  if (newPass !== confPass) {
+    showToast('Passwords do not match! Please check.', 'error');
+    return;
+  }
+
+  saveAuthCredentials(newUser, newPass);
+  loadSecuritySettings();
+  showToast('Login credentials updated successfully!', 'success');
+}
+
+// Programmatic helper
+window.loginUser = function(username, password) {
+  const creds = getAuthCredentials();
+  if (username === creds.username && password === creds.password) {
+    localStorage.setItem('kalp_logged_in', 'true');
+    const overlay = document.getElementById('login-overlay');
+    if (overlay) overlay.style.display = 'none';
+    return true;
+  }
+  return false;
+};
 
 // ===================================================================
 // ORDER LEDGER (TAILOR TRACKING)

@@ -1571,4 +1571,106 @@ body.printing-bill #bill-professional-print {
   border-bottom: 1px solid #e2e8f0;
 }
 
+/* ===== Login Screen & Security ===== */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: radial-gradient(circle at top right, #2a2550 0%, #12121a 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  backdrop-filter: blur(8px);
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-card);
+  border-radius: var(--radius-lg, 16px);
+  padding: 36px 30px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  animation: loginSlideUp 0.35s ease-out;
+}
+
+@keyframes loginSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.login-brand {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.login-logo {
+  max-height: 55px;
+  max-width: 140px;
+  object-fit: contain;
+  margin-bottom: 12px;
+}
+
+.login-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  letter-spacing: -0.5px;
+}
+
+.login-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.login-error {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-with-icon .input-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+  font-size: 1rem;
+  pointer-events: none;
+}
+
+.input-with-icon .form-input {
+  padding-left: 38px;
+}
+
+.shake-anim {
+  animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+@keyframes shake {
+  10%, 90% { transform: translate3d(-1px, 0, 0); }
+  20%, 80% { transform: translate3d(2px, 0, 0); }
+  30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+  40%, 60% { transform: translate3d(4px, 0, 0); }
+}
+
+.login-fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+
 
