@@ -357,6 +357,14 @@ async function syncToCloud(key, data) {
 }
 
 function migrateAndFixBillPendingAmounts() {
+  // Purge any legacy dummy seed orders from client local storage
+  const rawOrders = getData(STORAGE_KEYS.orders) || [];
+  const cleanOrders = rawOrders.filter(o => !String(o?.id || '').startsWith('ord-') && !/^customer\s*\d+$/i.test(String(o?.customerName || '').trim()));
+  if (cleanOrders.length !== rawOrders.length) {
+    appCache[STORAGE_KEYS.orders] = cleanOrders;
+    localStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(cleanOrders));
+  }
+
   const bills = appCache[STORAGE_KEYS.bills] || (function() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.bills)) || []; } catch(e) { return []; }
   })();
@@ -966,6 +974,7 @@ function refreshDashboard() {
   const processedKeys = new Set();
   let totalPendingOrders = 0;
   orders.forEach(order => {
+    if (String(order?.id || '').startsWith('ord-') || /^customer\s*\d+$/i.test(String(order?.customerName || '').trim())) return;
     const bill = bills.find(b => 
       (order.billId && b.id == order.billId) || 
       (order.billNumber && b.billNumber && String(b.billNumber) === String(order.billNumber).replace(/\D/g, ''))
@@ -1027,6 +1036,33 @@ function togglePrivacy(element, event) {
 
 function synthesizeBillFromOrder(order) {
   if (!order) return null;
+  const orderIdStr = String(order.id || '');
+  const custName = String(order.customerName || '').trim();
+
+  // Reject dummy seed orders (e.g. ord-1, Customer 1..50)
+  if (orderIdStr.startsWith('ord-')) return null;
+  if (/^customer\s*\d+$/i.test(custName)) return null;
+
+  // Derive authentic date: check order.date, order.createdAt, or timestamp inside order.billId / order.id
+  let authenticDate = '';
+  if (order.date && String(order.date).trim()) {
+    authenticDate = String(order.date).trim();
+  } else if (order.createdAt && !isNaN(new Date(order.createdAt).getTime())) {
+    authenticDate = new Date(order.createdAt).toISOString().split('T')[0];
+  } else if (order.deliveryDate && String(order.deliveryDate).trim()) {
+    authenticDate = String(order.deliveryDate).trim();
+  } else {
+    // If order has an authentic epoch timestamp in id or billId (e.g. 1793711604675)
+    const rawTs = (typeof order.billId === 'number' && order.billId > 1600000000000) ? order.billId
+                : (typeof order.id === 'number' && order.id > 1600000000000) ? order.id : null;
+    if (rawTs) {
+      authenticDate = new Date(rawTs).toISOString().split('T')[0];
+    }
+  }
+
+  // If no authentic date can be determined, DO NOT hijack today's date!
+  if (!authenticDate) return null;
+
   const num = parseInt(String(order.billNumber).replace(/\D/g, ''), 10) || 1;
   const oFab = parseFloat(order.fabric || order.total || 0);
   const oTailor = parseFloat(order.tailor || 0);
@@ -1049,7 +1085,7 @@ function synthesizeBillFromOrder(order) {
     customerName: order.customerName || 'Walk-in Customer',
     phone: order.phone || '',
     email: '',
-    date: order.date || order.deliveryDate || new Date().toISOString().split('T')[0],
+    date: authenticDate,
     tailorAmount: oTailor > 0 ? oTailor.toFixed(2) : '',
     noTailor: oTailor <= 0,
     advancePaid: oAdv,
@@ -1076,7 +1112,7 @@ function synthesizeBillFromOrder(order) {
     outfitInstructions: '',
     outfitOptions: oTailor > 0 ? ['Kurta', 'Pant'] : [],
     outfitQuantities: oTailor > 0 ? { Kurta: 1, Pant: 1 } : {},
-    createdAt: order.date ? new Date(order.date).toISOString() : new Date().toISOString(),
+    createdAt: order.createdAt || (order.date ? new Date(order.date).toISOString() : new Date(authenticDate).toISOString()),
     updatedAt: new Date().toISOString()
   };
 }
@@ -1097,7 +1133,7 @@ function openChartDetailModal(period) {
   const billMap = new Map();
   bills.forEach(b => { if (b) billMap.set(String(b.billNumber || b.id), b); });
   orders.forEach(o => {
-    if (o && o.billNumber) {
+    if (o && o.billNumber && !String(o.id || '').startsWith('ord-') && !/^customer\s*\d+$/i.test(String(o.customerName || '').trim())) {
       const numStr = String(o.billNumber).replace(/\D/g, '');
       if (numStr && !billMap.has(numStr) && !billMap.has(String(o.billId))) {
         const synth = synthesizeBillFromOrder(o);
